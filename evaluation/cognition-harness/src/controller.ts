@@ -36,6 +36,7 @@ export interface LifecycleRunProgress {
 export interface LifecycleSessionOptions {
   mountedMemory: readonly MemoryRecord[];
   curate?: boolean;
+  workMemory?: "wake-selected" | "complete-mounted";
 }
 
 export class LifecycleRunError extends Error {
@@ -294,12 +295,17 @@ export class LifecycleController {
     const recalledMemory = mountedMemory.filter((record) =>
       recalledIds.has(record.id),
     );
+    const workMemory =
+      options.workMemory === "complete-mounted"
+        ? mountedMemory
+        : recalledMemory;
 
     const workRequest: WorkRequest = {
       phase: "work",
       runId,
       task,
-      recalledMemory,
+      recalledMemory: workMemory,
+      memoryScope: options.workMemory ?? "wake-selected",
     };
     const workExecution = await this.perform(
       workRequest,

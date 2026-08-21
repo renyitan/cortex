@@ -188,6 +188,18 @@ export class PiAgentRunner {
       } finally {
         clearTimeout(timer);
       }
+      if (!attemptError && responseModel !== this.model.id) {
+        throw new PiAgentRunError(
+          `Provider returned model ${responseModel}; expected ${this.model.id}`,
+          telemetry(
+            attempt,
+            turns,
+            Date.now() - startedAt,
+            responseModel,
+            usage,
+          ),
+        );
+      }
 
       if (!attemptError && !timedOut && accepted !== undefined && acceptedCount === 1) {
         return {

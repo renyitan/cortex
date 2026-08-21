@@ -50,6 +50,7 @@ export interface WakeRequest extends PhaseRequestBase {
 export interface WorkRequest extends PhaseRequestBase {
   phase: "work";
   recalledMemory: readonly MemoryRecord[];
+  memoryScope: "wake-selected" | "complete-mounted";
 }
 
 export interface SleepRequest extends PhaseRequestBase {
@@ -133,6 +134,18 @@ export interface DirectMemoryExecutor {
     task: string,
     memory: readonly MemoryDraft[],
   ): Promise<BaselineExecution>;
+}
+
+export interface AdvisoryMemoryExecution extends BaselineExecution {
+  memoryCandidates: MemoryCandidate[];
+}
+
+export interface AdvisoryMemoryExecutor {
+  execute(
+    task: string,
+    memory: readonly MemoryDraft[],
+    mode: "acquire" | "answer",
+  ): Promise<AdvisoryMemoryExecution>;
 }
 
 export interface PhaseReceipt {

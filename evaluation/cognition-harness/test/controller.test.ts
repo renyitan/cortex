@@ -547,6 +547,76 @@ test("mounts the complete active store without filtering or reordering it", asyn
   executor.assertExhausted();
 });
 
+test("can give WORK the complete mounted store without WAKE selection", async () => {
+  const store = await createStore();
+  await store.applyWrites([
+    {
+      candidateId: "alpha",
+      record: {
+        id: "alpha",
+        kind: "learning",
+        text: "Alpha memory.",
+        evidence: "fixture",
+        source: "observed",
+      },
+    },
+    {
+      candidateId: "beta",
+      record: {
+        id: "beta",
+        kind: "decision",
+        text: "Beta memory.",
+        evidence: "fixture",
+        source: "operator",
+      },
+    },
+  ]);
+  const executor = new ScriptedPhaseExecutor([
+    {
+      phase: "wake",
+      payload: {
+        phase: "wake",
+        selectedMemoryIds: ["beta"],
+        summary: "Selected beta.",
+      },
+    },
+    {
+      phase: "work",
+      payload: {
+        phase: "work",
+        output: "Done.",
+        memoryCandidates: [],
+        summary: "Used complete memory.",
+      },
+    },
+    {
+      phase: "sleep",
+      payload: {
+        phase: "sleep",
+        writes: [],
+        summary: "No write.",
+      },
+    },
+  ]);
+  const controller = new LifecycleController(executor, store);
+
+  await controller.runSession("Use complete memory.", {
+    mountedMemory: await store.active(),
+    workMemory: "complete-mounted",
+  });
+
+  const work = executor.calls[1];
+  assert.equal(work?.phase, "work");
+  if (work?.phase === "work") {
+    assert.equal(work.memoryScope, "complete-mounted");
+    assert.deepEqual(
+      work.recalledMemory.map((record) => record.id),
+      ["alpha", "beta"],
+    );
+  }
+  executor.assertExhausted();
+});
+
 test("rejects a mounted store that omits active memory", async () => {
   const store = await createStore();
   await store.applyWrites([

@@ -34,6 +34,16 @@ export function combineTelemetry(
   model: string,
 ): ExecutionTelemetry {
   const combined = zeroTelemetry(model);
+  const observedModels = new Set(
+    telemetry
+      .filter((item) => item.attempts > 0)
+      .map((item) => item.model),
+  );
+  if (observedModels.size === 1) {
+    combined.model = [...observedModels][0]!;
+  } else if (observedModels.size > 1) {
+    combined.model = `mixed:${[...observedModels].sort().join(",")}`;
+  }
   for (const item of telemetry) {
     combined.attempts += item.attempts;
     combined.turns += item.turns;

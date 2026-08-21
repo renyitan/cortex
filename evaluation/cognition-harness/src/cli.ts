@@ -6,12 +6,16 @@ import { createInterface } from "node:readline/promises";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import type {
-  AuthEvent,
-  AuthPrompt,
-  ModelThinkingLevel,
+import {
+  clampThinkingLevel,
+  type AuthEvent,
+  type AuthPrompt,
+  type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
-import { CortexSourceLoader } from "./cortex-source.js";
+import {
+  CortexSourceLoader,
+  type CortexSourceSnapshot,
+} from "./cortex-source.js";
 import {
   defaultCredentialPath,
   PrivateFileCredentialStore,
@@ -19,8 +23,34 @@ import {
 import {
   createGitHubCopilotModels,
   createGitHubCopilotRuntime,
+  resolveGitHubCopilotModel,
+  type GitHubCopilotModelContext,
 } from "./pi-executor.js";
 import { JsonlPiTraceSink } from "./pi-trace.js";
+import {
+  countMabTokens,
+  isMabSource,
+  loadPreparedMabStreams,
+  scoreMabOutput,
+  selectMabQuestions,
+  type MabPreparedStream,
+  type MabSource,
+} from "./mab-adapter.js";
+import {
+  defaultMabThresholds,
+  freezeMabManifest,
+  readMabManifest,
+  runMabBatch,
+  type MabBatchModel,
+  type MabExecutionPolicy,
+} from "./mab-batch.js";
+import {
+  MAB_CONDITIONS,
+  runMabCondition,
+  type MabCondition,
+  type MabExecutorContext,
+  type MabStream,
+} from "./mab-condition.js";
 import {
   projectEmberTrialId,
   runProjectEmberBatch,
@@ -34,6 +64,19 @@ const executeFile = promisify(execFile);
 const PROVIDER = "github-copilot";
 const HARNESS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_RUNS_ROOT = join(HARNESS_ROOT, "runs");
+const DEFAULT_MAB_DATA_DIRECTORY = join(
+  HARNESS_ROOT,
+  "data",
+  "memory-agent-bench",
+);
+const DEFAULT_MAB_RUNS_ROOT = join(DEFAULT_RUNS_ROOT, "memory-agent-bench");
+const DEFAULT_MAB_EXECUTION: MabExecutionPolicy = {
+  maxAttempts: 2,
+  maxTurns: 3,
+  timeoutMs: 300_000,
+  workMemory: "complete-mounted",
+  questionIsolation: "fresh-runtime-and-cloned-store",
+};
 const THINKING_LEVELS: ReadonlySet<string> = new Set([
   "off",
   "minimal",
@@ -58,6 +101,10 @@ Usage:
   npm run harness -- models list
   npm run harness -- fixture run [--model gpt-5-mini] [--thinking low] [--runs-dir <path>]
   npm run harness -- fixture batch --trials <count> [--model gpt-5-mini] [--thinking low] [--runs-dir <path>]
+  npm run harness -- mab prepare [--data-dir <path>]
+  npm run harness -- mab smoke [--condition cortex] [--source factconsolidation_sh_6k] [--questions 1] [--model gpt-5-mini] [--thinking low]
+  npm run harness -- mab freeze [--questions 100] [--repetitions 3] [--maximum-cost-usd 25] [--manifest <path>] [--model gpt-5-mini] [--thinking low]
+  npm run harness -- mab run --manifest <path> [--data-dir <path>] [--runs-dir <path>]
 
 Environment:
   CORTEX_HARNESS_AUTH_FILE  Override the external credential file
@@ -210,6 +257,377 @@ function positiveIntegerOption(args: readonly string[], name: string): number {
   return value;
 }
 
+function positiveIntegerOptionOrDefault(
+  args: readonly string[],
+  name: string,
+  fallback: number,
+): number {
+  const raw = option(args, name);
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
+}
+
+function positiveNumberOptionOrDefault(
+  args: readonly string[],
+  name: string,
+  fallback: number,
+): number {
+  const raw = option(args, name);
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${name} must be positive`);
+  }
+  return value;
+}
+
+function mabConditionOption(args: readonly string[]): MabCondition {
+  const condition = option(args, "--condition") ?? "cortex";
+  const matched = MAB_CONDITIONS.find((candidate) => candidate === condition);
+  if (!matched) {
+    throw new Error(
+      `--condition must be one of ${MAB_CONDITIONS.join(", ")}`,
+    );
+  }
+  return matched;
+}
+
+function mabSourceOption(args: readonly string[]): MabSource {
+  const source = option(args, "--source") ?? "factconsolidation_sh_6k";
+  if (!isMabSource(source)) {
+    throw new Error(`unsupported MemoryAgentBench source: ${source}`);
+  }
+  return source;
+}
+
+function mabModel(
+  requestedId: string,
+  requestedThinkingLevel: ModelThinkingLevel,
+  context: GitHubCopilotModelContext,
+  execution: MabExecutionPolicy = DEFAULT_MAB_EXECUTION,
+): MabBatchModel {
+  const rates = [
+    context.model.cost,
+    ...(context.model.cost.tiers ?? []),
+  ];
+  const costPerMillionTokens = {
+    input: Math.max(...rates.map((rate) => rate.input)),
+    output: Math.max(...rates.map((rate) => rate.output)),
+    cacheRead: Math.max(...rates.map((rate) => rate.cacheRead)),
+    cacheWrite: Math.max(...rates.map((rate) => rate.cacheWrite)),
+  };
+  return {
+    provider: PROVIDER,
+    requestedId,
+    resolvedId: context.model.id,
+    requestedThinkingLevel,
+    effectiveThinkingLevel: clampThinkingLevel(
+      context.model,
+      requestedThinkingLevel,
+    ),
+    contextWindow: context.model.contextWindow,
+    maxOutputTokens: context.model.maxTokens,
+    costPerMillionTokens,
+    maximumInvocationCostUsd:
+      ((context.model.contextWindow *
+        (costPerMillionTokens.input +
+          costPerMillionTokens.cacheRead +
+          costPerMillionTokens.cacheWrite) +
+        context.model.maxTokens * costPerMillionTokens.output) /
+        1_000_000) *
+      execution.maxAttempts *
+      execution.maxTurns,
+  };
+}
+
+function toMabStream(
+  prepared: MabPreparedStream,
+  questionsPerStream: number,
+): MabStream {
+  const questions = selectMabQuestions(
+    [prepared],
+    questionsPerStream,
+  ).map((question) => ({
+    id: question.qaPairId,
+    prompt: question.prompt,
+    answers: question.answers,
+    metric: question.metric,
+  }));
+  return {
+    id: prepared.source,
+    source: prepared.source,
+    competency: prepared.task,
+    stratum:
+      prepared.hop === null
+        ? prepared.stratum
+        : `${prepared.stratum}-${prepared.hop}`,
+    chunks: prepared.chunks,
+    questions,
+  };
+}
+
+function mabRuntimeFactory(
+  credentials: PrivateFileCredentialStore,
+  modelId: string,
+  thinkingLevel: ModelThinkingLevel,
+  source: CortexSourceSnapshot,
+  execution: MabExecutionPolicy = DEFAULT_MAB_EXECUTION,
+  modelContext?: GitHubCopilotModelContext,
+): (context: MabExecutorContext) => ReturnType<typeof createGitHubCopilotRuntime> {
+  let shared = modelContext;
+  return async (context) => {
+    shared ??= await resolveGitHubCopilotModel(credentials, modelId);
+    return createGitHubCopilotRuntime({
+      credentials,
+      modelId,
+      modelContext: shared,
+      thinkingLevel,
+      maxAttempts: execution.maxAttempts,
+      maxTurns: execution.maxTurns,
+      timeoutMs: execution.timeoutMs,
+      trace: new JsonlPiTraceSink(
+        join(context.artifactDirectory, "agent-trace.jsonl"),
+      ),
+      source,
+      fixture: `memory-agent-bench/${context.streamId}`,
+    });
+  };
+}
+
+async function requiredRepositoryState(
+  repositoryRoot: string,
+): Promise<{ commit: string; dirty: boolean }> {
+  const state = await repositoryState(repositoryRoot);
+  if (state.commit === undefined || state.dirty === undefined) {
+    throw new Error("could not determine the Cortex repository state");
+  }
+  return { commit: state.commit, dirty: state.dirty };
+}
+
+function printMabStreams(streams: readonly MabPreparedStream[]): void {
+  for (const stream of streams) {
+    const tokens = stream.chunks.reduce(
+      (sum, chunk) => sum + countMabTokens(chunk),
+      0,
+    );
+    console.log(
+      `${stream.source}\t${stream.chunks.length} chunks\t${tokens} tokens\t${stream.questions.length} questions`,
+    );
+  }
+}
+
+async function mabCommand(args: readonly string[]): Promise<void> {
+  const action = args[0];
+  if (!action || !["prepare", "smoke", "freeze", "run"].includes(action)) {
+    throw new Error("usage: mab prepare|smoke|freeze|run [options]");
+  }
+  const dataDirectory = resolve(
+    option(args, "--data-dir") ?? DEFAULT_MAB_DATA_DIRECTORY,
+  );
+  const streams = await loadPreparedMabStreams({
+    cacheDirectory: dataDirectory,
+  });
+  printMabStreams(streams);
+  if (action === "prepare") {
+    console.log(`Prepared data: ${relative(process.cwd(), dataDirectory)}`);
+    return;
+  }
+
+  const sourceLoader = new CortexSourceLoader();
+  const source = await sourceLoader.snapshot();
+  const sourceManifest = source.manifest();
+  const credentials = new PrivateFileCredentialStore();
+
+  if (action === "smoke") {
+    const condition = mabConditionOption(args);
+    const selectedSource = mabSourceOption(args);
+    const questions = positiveIntegerOptionOrDefault(
+      args,
+      "--questions",
+      1,
+    );
+    const modelId = option(args, "--model") ?? "gpt-5-mini";
+    const thinking = option(args, "--thinking") ?? "low";
+    if (!isThinkingLevel(thinking)) {
+      throw new Error(`invalid thinking level: ${thinking}`);
+    }
+    const prepared = streams.find(
+      (stream) => stream.source === selectedSource,
+    );
+    if (!prepared) {
+      throw new Error(`prepared stream is missing ${selectedSource}`);
+    }
+    const artifactDirectory = runDirectory(
+      join(DEFAULT_MAB_RUNS_ROOT, "smoke"),
+    );
+    const createExecutors = mabRuntimeFactory(
+      credentials,
+      modelId,
+      thinking,
+      source,
+    );
+    const report = await runMabCondition({
+      artifactDirectory,
+      stream: toMabStream(prepared, questions),
+      condition,
+      repetition: 1,
+      model: modelId,
+      createExecutors,
+      score(output, question) {
+        return scoreMabOutput(
+          selectedSource,
+          output,
+          question.answers,
+        ).score === 1;
+      },
+    });
+    console.log(
+      `Smoke: ${condition} ${report.correct}/${report.totalQuestions} correct, ${report.errors} errors, $${report.telemetry.usage.costUsd.toFixed(6)}`,
+    );
+    console.log(
+      `Artifacts: ${relative(process.cwd(), artifactDirectory) || artifactDirectory}`,
+    );
+    if (report.status !== "completed") process.exitCode = 1;
+    return;
+  }
+
+  if (action === "freeze") {
+    const questionsPerStream = positiveIntegerOptionOrDefault(
+      args,
+      "--questions",
+      100,
+    );
+    const repetitions = positiveIntegerOptionOrDefault(
+      args,
+      "--repetitions",
+      3,
+    );
+    const modelId = option(args, "--model") ?? "gpt-5-mini";
+    const thinking = option(args, "--thinking") ?? "low";
+    if (!isThinkingLevel(thinking)) {
+      throw new Error(`invalid thinking level: ${thinking}`);
+    }
+    const modelContext = await resolveGitHubCopilotModel(
+      credentials,
+      modelId,
+    );
+    const repository = await requiredRepositoryState(
+      sourceLoader.repositoryRoot,
+    );
+    if (repository.dirty) {
+      throw new Error(
+        "refusing to freeze against a dirty Cortex worktree; commit the harness first",
+      );
+    }
+    const batchId = `mab-${new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
+    const manifestPath = resolve(
+      option(args, "--manifest") ??
+        join(DEFAULT_MAB_RUNS_ROOT, "manifests", `${batchId}.json`),
+    );
+    const thresholds = {
+      ...defaultMabThresholds(),
+      maximumCostUsd: positiveNumberOptionOrDefault(
+        args,
+        "--maximum-cost-usd",
+        25,
+      ),
+    };
+    const manifest = await freezeMabManifest({
+      manifestPath,
+      batchId,
+      streams,
+      questionsPerStream,
+      repetitions,
+      model: mabModel(
+        modelId,
+        thinking,
+        modelContext,
+        DEFAULT_MAB_EXECUTION,
+      ),
+      repository,
+      source: sourceManifest,
+      execution: DEFAULT_MAB_EXECUTION,
+      thresholds,
+    });
+    console.log(
+      `Frozen manifest: ${relative(process.cwd(), manifestPath) || manifestPath}`,
+    );
+    console.log(
+      `${manifest.runs.length} source repetitions, ${manifest.questionsPerStream} questions per stream, $${manifest.thresholds.maximumCostUsd.toFixed(2)} cap`,
+    );
+    return;
+  }
+
+  const manifestPath = option(args, "--manifest");
+  if (!manifestPath) {
+    throw new Error("mab run requires --manifest <path>");
+  }
+  const manifest = await readMabManifest(resolve(manifestPath));
+  if (!isThinkingLevel(manifest.model.requestedThinkingLevel)) {
+    throw new Error(
+      `frozen thinking level is unsupported: ${manifest.model.requestedThinkingLevel}`,
+    );
+  }
+  if (!isThinkingLevel(manifest.model.effectiveThinkingLevel)) {
+    throw new Error(
+      `frozen effective thinking level is unsupported: ${manifest.model.effectiveThinkingLevel}`,
+    );
+  }
+  const modelContext = await resolveGitHubCopilotModel(
+    credentials,
+    manifest.model.requestedId,
+  );
+  const execution = {
+    model: mabModel(
+      manifest.model.requestedId,
+      manifest.model.requestedThinkingLevel,
+      modelContext,
+      manifest.protocol.execution,
+    ),
+    repository: await requiredRepositoryState(sourceLoader.repositoryRoot),
+    source: sourceManifest,
+  };
+  const artifactDirectory = runDirectory(
+    resolve(option(args, "--runs-dir") ?? DEFAULT_MAB_RUNS_ROOT),
+  );
+  const report = await runMabBatch({
+    artifactDirectory,
+    manifest,
+    streams,
+    execution,
+    createExecutors: mabRuntimeFactory(
+      credentials,
+      manifest.model.requestedId,
+      manifest.model.effectiveThinkingLevel,
+      source,
+      manifest.protocol.execution,
+      modelContext,
+    ),
+  });
+  console.log(
+    `Artifacts: ${relative(process.cwd(), artifactDirectory) || artifactDirectory}`,
+  );
+  for (const condition of MAB_CONDITIONS) {
+    const aggregate = report.aggregates[condition];
+    console.log(
+      `${condition}: ${aggregate.correct}/${aggregate.questions} correct, ${aggregate.errors} errors, $${aggregate.telemetry.usage.costUsd.toFixed(6)}`,
+    );
+  }
+  for (const contrast of report.contrasts) {
+    console.log(
+      `cortex - ${contrast.comparator}: ${(contrast.difference * 100).toFixed(1)} pp, ${(contrast.confidenceLevel * 100).toFixed(0)}% CI [${(contrast.lower * 100).toFixed(1)}, ${(contrast.upper * 100).toFixed(1)}]`,
+    );
+  }
+  console.log(`Result: ${report.criteria.supported ? "SUPPORTED" : "NOT SUPPORTED"}`);
+  if (report.status !== "completed") process.exitCode = 1;
+}
+
 async function fixtureCommand(args: readonly string[]): Promise<void> {
   const action = args[0];
   if (action !== "run" && action !== "batch") {
@@ -225,9 +643,10 @@ async function fixtureCommand(args: readonly string[]): Promise<void> {
   await mkdir(artifactDirectory, { recursive: true, mode: 0o700 });
 
   const credentials = new PrivateFileCredentialStore();
-  const source = new CortexSourceLoader();
-  const sourceManifest = await source.manifest();
-  const repository = await repositoryState(source.repositoryRoot);
+  const sourceLoader = new CortexSourceLoader();
+  const source = await sourceLoader.snapshot();
+  const sourceManifest = source.manifest();
+  const repository = await repositoryState(sourceLoader.repositoryRoot);
 
   if (action === "batch") {
     const trialCount = positiveIntegerOption(args, "--trials");
@@ -345,6 +764,7 @@ async function main(): Promise<void> {
   if (command === "auth") return authCommand(args);
   if (command === "models") return modelsCommand(args);
   if (command === "fixture") return fixtureCommand(args);
+  if (command === "mab") return mabCommand(args);
   throw new Error(`unknown command: ${command}`);
 }
 

@@ -20,6 +20,29 @@ export interface CortexPhaseSource {
   content: string;
 }
 
+export type CortexSourceManifest = Readonly<
+  Record<Phase, { files: readonly string[]; sha256: string }>
+>;
+
+export class CortexSourceSnapshot {
+  constructor(
+    private readonly phases: Readonly<Record<Phase, CortexPhaseSource>>,
+  ) {}
+
+  async load(phase: Phase): Promise<CortexPhaseSource> {
+    return structuredClone(this.phases[phase]);
+  }
+
+  manifest(): CortexSourceManifest {
+    return Object.fromEntries(
+      Object.entries(this.phases).map(([phase, source]) => [
+        phase,
+        { files: source.files, sha256: source.digest },
+      ]),
+    ) as CortexSourceManifest;
+  }
+}
+
 export function defaultRepositoryRoot(
   environment: NodeJS.ProcessEnv = process.env,
 ): string {
@@ -49,7 +72,7 @@ export class CortexSourceLoader {
   }
 
   async manifest(): Promise<
-    Readonly<Record<Phase, { files: readonly string[]; sha256: string }>>
+    CortexSourceManifest
   > {
     const entries = await Promise.all(
       (["wake", "work", "sleep", "curate"] as const).map(async (phase) => {
@@ -57,8 +80,20 @@ export class CortexSourceLoader {
         return [phase, { files: source.files, sha256: source.digest }] as const;
       }),
     );
-    return Object.fromEntries(entries) as Readonly<
-      Record<Phase, { files: readonly string[]; sha256: string }>
-    >;
+    return Object.fromEntries(entries) as CortexSourceManifest;
+  }
+
+  async snapshot(): Promise<CortexSourceSnapshot> {
+    const phases = await Promise.all(
+      (["wake", "work", "sleep", "curate"] as const).map(async (phase) => [
+        phase,
+        await this.load(phase),
+      ] as const),
+    );
+    return new CortexSourceSnapshot(
+      Object.fromEntries(phases) as Readonly<
+        Record<Phase, CortexPhaseSource>
+      >,
+    );
   }
 }

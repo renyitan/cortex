@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { PiAgentRunError, PiAgentRunner } from "../src/pi-agent-runner.js";
 import {
+  PiAdvisoryMemoryExecutor,
   PiBaselineExecutor,
   PiDirectMemoryExecutor,
   PiPhaseExecutor,
@@ -90,6 +91,46 @@ test("Pi runner bounds attempts when the model never submits a receipt", async (
   assert.equal(faux.state.callCount, 2);
 });
 
+test("Pi runner rejects a provider response from a different model", async () => {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    () => ({
+      ...fauxAssistantMessage(
+        fauxToolCall("submit_baseline", {
+          output: "result",
+          summary: "completed",
+        }),
+        { stopReason: "toolUse" },
+      ),
+      responseModel: "fallback-model",
+    }),
+    fauxAssistantMessage(
+      fauxToolCall("submit_baseline", {
+        output: "retry result",
+        summary: "must not run",
+      }),
+      { stopReason: "toolUse" },
+    ),
+  ]);
+  const runner = new PiAgentRunner({
+    models,
+    model: faux.getModel(),
+    maxAttempts: 2,
+  });
+  const baseline = new PiBaselineExecutor(runner, "test");
+
+  await assert.rejects(
+    baseline.execute("Return a result."),
+    (error: unknown) =>
+      error instanceof PiAgentRunError &&
+      error.telemetry.model === "fallback-model" &&
+      /expected/.test(error.message),
+  );
+  assert.equal(faux.state.callCount, 1);
+});
+
 test("Pi direct-memory executor completes the task with supplied memory", async () => {
   const faux = fauxProvider();
   const models = createModels();
@@ -124,6 +165,47 @@ test("Pi direct-memory executor completes the task with supplied memory", async 
     execution.output,
     "Project Ember now starts faster. CANARY-GREEN",
   );
+  assert.equal(execution.telemetry.turns, 1);
+  assert.equal(faux.getPendingResponseCount(), 0);
+});
+
+test("Pi advisory executor returns voluntary memory candidates", async () => {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall("submit_advisory", {
+        output: "Observation acknowledged.",
+        memoryCandidates: [
+          {
+            id: "banking-example",
+            kind: "learning",
+            text: "A failed disposable card maps to label 28.",
+            evidence: "current observation",
+            source: "observed",
+          },
+        ],
+        summary: "Voluntarily captured one learning.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+  ]);
+  const runner = new PiAgentRunner({
+    models,
+    model: faux.getModel(),
+    maxAttempts: 1,
+  });
+  const advisory = new PiAdvisoryMemoryExecutor(runner, "test");
+
+  const execution = await advisory.execute(
+    "Learn this example.",
+    [],
+    "acquire",
+  );
+
+  assert.equal(execution.output, "Observation acknowledged.");
+  assert.equal(execution.memoryCandidates[0]?.id, "banking-example");
   assert.equal(execution.telemetry.turns, 1);
   assert.equal(faux.getPendingResponseCount(), 0);
 });

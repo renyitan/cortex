@@ -1,6 +1,8 @@
 import type {
   BaselineExecution,
   BaselineExecutor,
+  AdvisoryMemoryExecution,
+  AdvisoryMemoryExecutor,
   DirectMemoryExecutor,
   ExecutionTelemetry,
   MemoryDraft,
@@ -87,6 +89,41 @@ export class ScriptedDirectMemoryExecutor implements DirectMemoryExecutor {
     if (this.outputs.length > 0) {
       throw new Error(
         `${this.outputs.length} scripted direct-memory outputs were not used`,
+      );
+    }
+  }
+}
+
+export class ScriptedAdvisoryMemoryExecutor implements AdvisoryMemoryExecutor {
+  readonly calls: {
+    task: string;
+    memory: readonly MemoryDraft[];
+    mode: "acquire" | "answer";
+  }[] = [];
+
+  constructor(private readonly outputs: AdvisoryMemoryExecution[]) {}
+
+  async execute(
+    task: string,
+    memory: readonly MemoryDraft[],
+    mode: "acquire" | "answer",
+  ): Promise<AdvisoryMemoryExecution> {
+    this.calls.push({
+      task,
+      memory: structuredClone(memory),
+      mode,
+    });
+    const output = this.outputs.shift();
+    if (output === undefined) {
+      throw new Error("no scripted advisory response");
+    }
+    return structuredClone(output);
+  }
+
+  assertExhausted(): void {
+    if (this.outputs.length > 0) {
+      throw new Error(
+        `${this.outputs.length} scripted advisory outputs were not used`,
       );
     }
   }
