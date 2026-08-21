@@ -244,7 +244,7 @@ export class LifecycleController {
       phase: "sleep",
       runId,
       task,
-      existingMemory: memoryBeforeRun,
+      candidateMemory,
       recalledMemory,
       work,
     };

@@ -54,7 +54,7 @@ export interface WorkRequest extends PhaseRequestBase {
 
 export interface SleepRequest extends PhaseRequestBase {
   phase: "sleep";
-  existingMemory: readonly MemoryRecord[];
+  candidateMemory: readonly MemoryRecord[];
   recalledMemory: readonly MemoryRecord[];
   work: WorkPayload;
 }

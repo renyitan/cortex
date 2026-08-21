@@ -122,6 +122,18 @@ test("controller lets WAKE select only from retrieved candidates", async () => {
     executor.calls[0]?.phase === "wake" ? executor.calls[0].memory : undefined,
     [result.memory.find((item) => item.id === "ember-marker")],
   );
+  assert.deepEqual(
+    executor.calls[2]?.phase === "sleep"
+      ? executor.calls[2].candidateMemory.map((item) => item.id)
+      : undefined,
+    ["ember-marker"],
+  );
+  assert.deepEqual(
+    executor.calls[2]?.phase === "sleep"
+      ? executor.calls[2].recalledMemory.map((item) => item.id)
+      : undefined,
+    ["ember-marker"],
+  );
 });
 
 test("controller rejects retriever IDs outside active memory", async () => {
