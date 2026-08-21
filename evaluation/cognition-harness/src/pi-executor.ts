@@ -263,8 +263,8 @@ function phaseGuidance(phase: Phase): string {
     case "sleep":
       return [
         "Review the completed WORK result and its candidates.",
-        "Use the supplied bounded candidate and recalled memory to detect already-covered candidates.",
-        "The isolated evaluation store is authorized for non-lossy writes from those candidates only.",
+        "Use the supplied bounded retrieved and recalled memory only to detect whether a WORK memory candidate is already covered.",
+        "The isolated evaluation store is authorized for non-lossy writes from work.memoryCandidates only.",
         "A write must preserve its candidate ID, kind, text, evidence, and source exactly.",
         "Do not persist action logs, restatements, or candidates already covered by existing memory.",
         "Never replace an existing record. Use each candidate at most once; an empty write list is valid.",

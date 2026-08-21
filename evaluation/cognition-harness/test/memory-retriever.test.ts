@@ -124,7 +124,7 @@ test("controller lets WAKE select only from retrieved candidates", async () => {
   );
   assert.deepEqual(
     executor.calls[2]?.phase === "sleep"
-      ? executor.calls[2].candidateMemory.map((item) => item.id)
+      ? executor.calls[2].retrievedMemory.map((item) => item.id)
       : undefined,
     ["ember-marker"],
   );
