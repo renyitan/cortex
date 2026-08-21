@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "bash": "\"$COPILOT_PLUGIN_ROOT/bin/cortex-mount\""
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "matcher": "skill",
+        "bash": "\"$COPILOT_PLUGIN_ROOT/tools/cognition-skill-observe\"",
+        "timeoutSec": 2
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "bash": "\"$COPILOT_PLUGIN_ROOT/bin/cortex-capture-check\""
+      }
+    ]
+  }
+}

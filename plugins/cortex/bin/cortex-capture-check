@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+# cortex-capture-check — the WORK nerve. Runs as the cortex plugin's `Stop` (agentStop) hook, at the
+# end of every agent turn. It watches the intake buffer on BOTH of its health axes and forces a LOOK
+# when either one slips. It never fakes the judgment — only the model knows what to capture or how to
+# consolidate — so it converts a silent omission into a conscious choice at a host-enforced gate.
+#
+#   AXIS 1 — CAPTURE staleness (is anything being jotted?).
+#     capture-as-produced is an always-on rule, but a rule set once at session start fades as a session
+#     goes deep, so a whole session can end with an empty buffer unnoticed. This axis watches whether
+#     any intake.md advanced lately; after a stretch of silence during real work it forces a capture
+#     look.
+#   AXIS 2 — DRAIN debt (is the buffer being consolidated?).  [added: the back-half fix]
+#     SLEEP/consolidate is also an always-on rule with no host trigger, so the buffer fills and is never
+#     drained (operator observed exactly this: 10 notes captured, 0 drained, at an episode close). AXIS 1
+#     is BLIND to this — it resets on ANY capture, so a buffer that gains a note every few turns but is
+#     never drained looks perfectly healthy. This axis watches the buffer's FULLNESS/AGE (count + oldest
+#     age of `status: open` notes) and forces a consolidate look when debt crosses a threshold.
+#
+# Priority: DRAIN takes precedence over CAPTURE in a given turn — a full undrained buffer is the bigger
+# loss risk, and draining it re-arms the capture signal. At most ONE nudge per turn.
+#
+# EFFECTIVENESS LOG (AXIS 2 instrumentation): the drain nudge forces the agent to LOOK, but cannot
+# force a good consolidation — so we measure whether a nudge actually leads to draining. When a drain
+# nudge fires we remember how many notes were open; over the next few turns we watch the open count.
+# If it drops, the nudge was FOLLOWED; if the resolve window passes with no drop, it was IGNORED. Each
+# outcome is appended to .cortex/drain-effectiveness.log (local-only, gitignored — telemetry, not
+# memory). recall surfaces a one-line followed/ignored summary at WAKE so the operator can see, over
+# real sessions, whether the back-half fix actually changes behavior (the one thing a sandbox can't
+# prove). Env: CORTEX_DRAIN_RESOLVE_TURNS (default = the drain cooldown) = turns to wait before an
+# unanswered nudge is logged as ignored.
+#
+# Mechanism (per-axis throttle, reset = cooldown, no block-loops):
+#   - CAPTURE: every turn, find the newest mtime across all workspace/<track>/intake.md. If it advanced
+#     → a capture happened → reset the silence counter (quiet). Else increment; at the threshold, nudge
+#     and reset (reset IS the cooldown).
+#   - DRAIN: every turn, count `status: open` notes and find the oldest one's age in days. If count or
+#     age crosses its threshold AND the drain cooldown is 0 → nudge, then set the cooldown so the agent
+#     gets a few turns to actually drain before being nudged again.
+#
+# Calibration / safety:
+#   - Eligibility: only fires when the repo actually has a track (`workspace/*/track.md`).
+#   - Per-session: counters reset when the sessionId changes (fresh grace window).
+#   - Fail-OPEN: any error → no output, exit 0. A nudge must never block real work on a bug.
+#   - Thresholds (all env-overridable):
+#       CORTEX_CAPTURE_NUDGE_TURNS   (default 12)  turns of capture silence before the capture nudge
+#       CORTEX_DRAIN_NUDGE_COUNT     (default 5)   open notes before the drain nudge
+#       CORTEX_DRAIN_NUDGE_AGE_DAYS  (default 1)   age (days) of the oldest open note before the nudge
+#       CORTEX_DRAIN_COOLDOWN_TURNS  (default 4)   turns to wait after a drain nudge before nudging again
+#
+# Input: the agentStop payload on stdin (camelCase `sessionId`/`cwd` or VS Code `session_id`/`cwd`).
+# Output: nothing, OR a single `{"decision":"block","reason":"..."}` JSON object on stdout.
+# State:  $PROJECT/.cortex/capture-check.state  =  sessionId|captureTurns|captureMtime|drainCooldown|nudgeOpenCount|nudgeWaitTurns
+#         $PROJECT/.cortex/drain-effectiveness.log  =  append-only, one line per resolved nudge (followed|ignored)
+set -uo pipefail
+
+# --- fail-open wrapper: anything unexpected exits clean with no decision ------------------------
+emit_nothing() { exit 0; }
+trap emit_nothing ERR
+
+payload="$(cat 2>/dev/null || true)"
+
+field() { # field <name> — first matching "name": "value" (camelCase or snake_case)
+  printf '%s' "$payload" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1
+}
+
+sid="$(field sessionId)";  [ -n "$sid" ] || sid="$(field session_id)"
+cwd="$(field cwd)"
+PROJECT="${cwd:-${COPILOT_PROJECT_DIR:-$PWD}}"
+[ -d "$PROJECT" ] || PROJECT="$PWD"
+PLUGIN_ROOT="${COPILOT_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+EVENT_TOOL="$PLUGIN_ROOT/tools/cognition-event"
+
+event() {
+  [ -x "$EVENT_TOOL" ] || return 0
+  if ! CORTEX_EVENT_REPO_ROOT="$PROJECT" \
+    "$EVENT_TOOL" emit "$@" >/dev/null; then
+    printf 'cortex-capture-check: event append failed (reason: event_write_failed)\n' >&2
+  fi
+}
+
+# eligibility — only nudge where tracked work exists -------------------------------------------
+shopt -s nullglob
+tracks=("$PROJECT"/workspace/*/track.md)
+[ "${#tracks[@]}" -gt 0 ] || exit 0
+
+# thresholds ------------------------------------------------------------------------------------
+CAP_THRESHOLD="${CORTEX_CAPTURE_NUDGE_TURNS:-12}"
+case "$CAP_THRESHOLD" in ''|*[!0-9]*) CAP_THRESHOLD=12 ;; esac
+[ "$CAP_THRESHOLD" -ge 1 ] || CAP_THRESHOLD=12
+
+DRAIN_COUNT="${CORTEX_DRAIN_NUDGE_COUNT:-5}"
+case "$DRAIN_COUNT" in ''|*[!0-9]*) DRAIN_COUNT=5 ;; esac
+[ "$DRAIN_COUNT" -ge 1 ] || DRAIN_COUNT=5
+
+DRAIN_AGE_DAYS="${CORTEX_DRAIN_NUDGE_AGE_DAYS:-1}"
+case "$DRAIN_AGE_DAYS" in ''|*[!0-9]*) DRAIN_AGE_DAYS=1 ;; esac
+
+DRAIN_COOLDOWN="${CORTEX_DRAIN_COOLDOWN_TURNS:-4}"
+case "$DRAIN_COOLDOWN" in ''|*[!0-9]*) DRAIN_COOLDOWN=4 ;; esac
+
+# how many turns to wait for a fired drain nudge to be answered before logging it "ignored"
+RESOLVE_WINDOW="${CORTEX_DRAIN_RESOLVE_TURNS:-$DRAIN_COOLDOWN}"
+case "$RESOLVE_WINDOW" in ''|*[!0-9]*) RESOLVE_WINDOW="$DRAIN_COOLDOWN" ;; esac
+[ "$RESOLVE_WINDOW" -ge 1 ] || RESOLVE_WINDOW="$DRAIN_COOLDOWN"
+
+STATE="$PROJECT/.cortex/capture-check.state"
+EFFECT_LOG="$PROJECT/.cortex/drain-effectiveness.log"
+
+mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+
+# epoch (seconds) for a YYYY-MM-DD date, portable across BSD/GNU date; empty on failure
+date_epoch() {
+  date -j -f "%Y-%m-%d" "$1" +%s 2>/dev/null || date -d "$1" +%s 2>/dev/null || true
+}
+
+# --- AXIS 1 state: capture staleness (newest intake mtime) -------------------------------------
+newest=0
+for f in "$PROJECT"/workspace/*/intake.md; do
+  [ -f "$f" ] || continue
+  m="$(mtime "$f")"
+  [ "$m" -gt "$newest" ] && newest="$m"
+done
+
+# --- AXIS 2 state: drain debt (count + oldest age of open notes) -------------------------------
+open_count=0
+oldest_epoch=0
+for f in "$PROJECT"/workspace/*/intake.md; do
+  [ -f "$f" ] || continue
+  while IFS= read -r line; do
+    open_count=$((open_count + 1))
+    d="$(printf '%s' "$line" | sed -n 's/.*captured:[[:space:]]*\([0-9][0-9-]*\).*/\1/p' | head -1)"
+    [ -n "$d" ] || continue
+    e="$(date_epoch "$d")"
+    [ -n "$e" ] || continue
+    if [ "$oldest_epoch" -eq 0 ] || [ "$e" -lt "$oldest_epoch" ]; then oldest_epoch="$e"; fi
+  done < <(grep -E '^- captured:.*status:[[:space:]]*open' "$f" 2>/dev/null)
+done
+
+oldest_age_days=0
+if [ "$oldest_epoch" -gt 0 ]; then
+  now_epoch="$(date +%s 2>/dev/null || echo 0)"
+  [ "$now_epoch" -gt "$oldest_epoch" ] && oldest_age_days=$(( (now_epoch - oldest_epoch) / 86400 ))
+fi
+
+# --- read prior state --------------------------------------------------------------------------
+# State carries, after the original 4 fields, a pending-nudge marker for the effectiveness log:
+#   nudge_open  = open-note count at the moment the last drain nudge fired (0 = no nudge pending)
+#   nudge_wait  = turns elapsed since that nudge, waiting for an answer
+psid=""; cap_turns=0; pmtime=0; drain_cd=0; nudge_open=0; nudge_wait=0
+if [ -f "$STATE" ]; then
+  IFS='|' read -r psid cap_turns pmtime drain_cd nudge_open nudge_wait < "$STATE" 2>/dev/null || true
+fi
+case "$cap_turns"   in ''|*[!0-9]*) cap_turns=0 ;; esac
+case "$pmtime"      in ''|*[!0-9]*) pmtime=0 ;; esac
+case "$drain_cd"    in ''|*[!0-9]*) drain_cd=0 ;; esac
+case "$nudge_open"  in ''|*[!0-9]*) nudge_open=0 ;; esac
+case "$nudge_wait"  in ''|*[!0-9]*) nudge_wait=0 ;; esac
+
+# new session → reset both windows; seed capture baseline so a pre-existing buffer is not "new"
+if [ "$sid" != "$psid" ]; then
+  cap_turns=0
+  pmtime="$newest"
+  drain_cd=0
+  nudge_open=0
+  nudge_wait=0
+fi
+
+# --- AXIS 1 decision: capture silence ----------------------------------------------------------
+capture_due=0
+if [ "$newest" -gt "$pmtime" ]; then
+  cap_turns=0          # something captured → silence broken
+  pmtime="$newest"
+else
+  cap_turns=$((cap_turns + 1))
+  if [ "$cap_turns" -ge "$CAP_THRESHOLD" ]; then capture_due=1; cap_turns=0; fi
+fi
+
+# --- AXIS 2 decision: drain debt ---------------------------------------------------------------
+drain_due=0
+debt=0
+[ "$open_count" -ge "$DRAIN_COUNT" ] && debt=1
+[ "$oldest_age_days" -ge "$DRAIN_AGE_DAYS" ] && [ "$open_count" -ge 1 ] && debt=1
+if [ "$debt" -eq 1 ]; then
+  if [ "$drain_cd" -le 0 ]; then
+    drain_due=1
+    drain_cd="$DRAIN_COOLDOWN"   # cooldown so the agent gets turns to actually drain
+  else
+    drain_cd=$((drain_cd - 1))
+  fi
+  # drain dominates: while the buffer carries debt, the coherent message is "drain", not
+  # "capture more" — so suppress the capture nudge and don't accrue capture silence this period.
+  capture_due=0
+  cap_turns=0
+else
+  drain_cd=0                      # buffer clean → reset cooldown
+fi
+
+# --- AXIS 2 instrumentation: did the LAST drain nudge actually lead to draining? ---------------
+# Resolve any pending nudge first (using this turn's open_count), THEN arm a new one if a nudge
+# fires this turn. The drain cooldown guarantees at most one nudge is pending at a time, so the
+# two never collide. Outcomes are appended to the local (gitignored) effectiveness log; recall
+# summarizes them at WAKE so real-session efficacy is visible, not assumed.
+effect_line=""
+effect_before=0
+if [ "$nudge_open" -gt 0 ]; then
+  effect_before="$nudge_open"
+  if [ "$open_count" -lt "$nudge_open" ]; then
+    # open notes dropped since the nudge → it was acted on
+    effect_line="$(date +%F)  outcome=followed  nudged_at_open=${nudge_open}  now_open=${open_count}  turns=${nudge_wait}"
+    nudge_open=0; nudge_wait=0
+  else
+    nudge_wait=$((nudge_wait + 1))
+    if [ "$nudge_wait" -ge "$RESOLVE_WINDOW" ]; then
+      effect_line="$(date +%F)  outcome=ignored  nudged_at_open=${nudge_open}  now_open=${open_count}  turns=${nudge_wait}"
+      nudge_open=0; nudge_wait=0
+    fi
+  fi
+fi
+# arm a fresh pending nudge when one fires this turn (records the open count to beat)
+if [ "$drain_due" -eq 1 ]; then
+  nudge_open="$open_count"
+  nudge_wait=0
+fi
+
+# --- persist state -----------------------------------------------------------------------------
+mkdir -p "$PROJECT/.cortex" 2>/dev/null || true
+printf '%s|%s|%s|%s|%s|%s\n' "$sid" "$cap_turns" "$pmtime" "$drain_cd" "$nudge_open" "$nudge_wait" > "$STATE" 2>/dev/null || true
+[ -n "$effect_line" ] && printf '%s\n' "$effect_line" >> "$EFFECT_LOG" 2>/dev/null || true
+if [ -n "$effect_line" ]; then
+  if printf '%s' "$effect_line" | grep -q 'outcome=followed'; then
+    effect_status="effective"
+  else
+    effect_status="ineffective"
+  fi
+  event intake.drain_outcome "$effect_status" \
+    --count "before=$effect_before" --count "after=$open_count"
+fi
+
+# --- emit at most one nudge, DRAIN first -------------------------------------------------------
+# Reasons are kept double-quote-free so the JSON needs no escaping.
+if [ "$drain_due" -eq 1 ]; then
+  if [ "$oldest_age_days" -eq 0 ]; then
+    age_bucket="same_day"
+  elif [ "$oldest_age_days" -eq 1 ]; then
+    age_bucket="one_day"
+  else
+    age_bucket="multi_day"
+  fi
+  event intake.drain_nudge nudged \
+    --count "open=$open_count" --count "active_tracks=${#tracks[@]}" \
+    --attribute "oldest_age_bucket=$age_bucket"
+  reason="Drain check (cortex SLEEP reflex): ${open_count} note(s) are sitting undrained in your intake buffer(s) (oldest ~${oldest_age_days}d old) and consolidation has not run. Run SLEEP now: invoke the consolidate skill to replay each open note, dedupe against memory/, set confidence, route it to memory/learnings.md or memory/decisions.md (or fold into a skill), then flip each note status: open -> drained with a derives-to link to the record it became. Do NOT silently delete notes. If a note is genuinely not worth keeping, mark it rejected with a one-line reason. Then continue what you were doing."
+  printf '{"decision":"block","reason":"%s"}\n' "$reason"
+  exit 0
+fi
+
+if [ "$capture_due" -eq 1 ]; then
+  event intake.capture_nudge nudged \
+    --count "active_tracks=${#tracks[@]}" \
+    --attribute "quiet_turns=$CAP_THRESHOLD"
+  reason="Capture check (cortex WORK reflex): about ${CAP_THRESHOLD} turns have passed with nothing jotted to intake. Look back over the recent work and name ONE thing worth keeping — a lesson learned, a friction or correction from the operator, a surprise, or a stated preference. If there is one, capture it now in a single command: .cortex/bin/intake --track <your active track> '<one line>' (add --episode <id> if you know it). If there is genuinely nothing to keep, say so in one short line and carry on — do not invent filler. Then continue exactly what you were doing."
+  printf '{"decision":"block","reason":"%s"}\n' "$reason"
+  exit 0
+fi
+
+exit 0

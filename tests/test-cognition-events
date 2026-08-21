@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""Deterministic tests for content-minimal cognition events and hook seams."""
+from __future__ import annotations
+
+import json
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / "plugins/cortex/tools"
+HOOK = ROOT / "plugins/cortex/bin/cortex-capture-check"
+event_module = SourceFileLoader(
+    "cognition_event", str(TOOLS / "cognition_event.py")
+).load_module()
+
+passed = failed = 0
+
+
+def check(name, condition):
+    global passed, failed
+    if condition:
+        passed += 1
+        print(f"  PASS  {name}")
+    else:
+        failed += 1
+        print(f"  FAIL  {name}")
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    event_file = root / ".cortex/cognition-events.jsonl"
+    env = dict(
+        os.environ,
+        CORTEX_EVENT_REPO_ROOT=str(root),
+        CORTEX_EVENTS_FILE=".cortex/cognition-events.jsonl",
+        CORTEX_EVENT_RUN_ID="test-run",
+        CORTEX_EVENT_TIME="2026-07-01T12:00:00Z",
+    )
+
+    payload, reason = event_module.emit_event(
+        "retrieval.search",
+        "ok",
+        root=root,
+        refs=["memory/learnings.md::fixture"],
+        counts={"returned": 1},
+        hashes={"query_sha256": event_module.sha256_text("private query")},
+        attributes={"mode": "bm25", "scope": "global"},
+    )
+    check("valid event appends", reason is None and payload is not None)
+    lines = event_file.read_text().splitlines()
+    check("event file contains one JSON object", len(lines) == 1)
+    first = json.loads(lines[0])
+    check("event envelope is versioned",
+          first["schema_version"] == event_module.SCHEMA_VERSION)
+    check("locked event envelope fields are present",
+          set(first) == {
+              "schema_version", "event_id", "timestamp", "event_type",
+              "repo_id", "episode_id", "run_id", "turn_id",
+              "parent_run_id", "component", "status", "duration_ms",
+              "attributes", "artifact_refs", "capability_manifest_hash",
+          })
+    check("event stores hash but not query text",
+          first["attributes"]["hashes"]["query_sha256"] and
+          "private query" not in lines[0])
+    check("event file is private",
+          stat.S_IMODE(event_file.stat().st_mode) & 0o077 == 0)
+
+    old_run_id = os.environ.get("CORTEX_EVENT_RUN_ID")
+    old_time = os.environ.get("CORTEX_EVENT_TIME")
+    try:
+        os.environ["CORTEX_EVENT_RUN_ID"] = "deterministic-run"
+        os.environ["CORTEX_EVENT_TIME"] = "2026-07-01T12:00:00Z"
+        deterministic = event_module.build_event(
+            "retrieval.fetch", "ok"
+        )
+    finally:
+        if old_run_id is None:
+            os.environ.pop("CORTEX_EVENT_RUN_ID", None)
+        else:
+            os.environ["CORTEX_EVENT_RUN_ID"] = old_run_id
+        if old_time is None:
+            os.environ.pop("CORTEX_EVENT_TIME", None)
+        else:
+            os.environ["CORTEX_EVENT_TIME"] = old_time
+    check("test clock and run ID are injectable",
+          deterministic["run_id"] == "deterministic-run" and
+          deterministic["timestamp"] == "2026-07-01T12:00:00Z")
+
+    _, bad_reason = event_module.emit_event(
+        "retrieval.search",
+        "ok",
+        root=root,
+        attributes={"content": "private prose with spaces"},
+    )
+    check("free-form content is rejected", bad_reason == "invalid_event")
+    _, status_reason = event_module.emit_event(
+        "retrieval.fetch", "nudged", root=root
+    )
+    check("event/status combinations are locked",
+          status_reason == "invalid_event")
+    ensured, ensure_reason = event_module.emit_event(
+        "retrieval.ensure",
+        "ok",
+        root=root,
+        attributes={"mode": "bm25", "changed": False},
+        counts={"indexed": 4, "vectors": 0},
+    )
+    check("retrieval ensure is observable",
+          ensure_reason is None and
+          ensured["event_type"] == "retrieval.ensure")
+    phase_id = "11111111111111111111111111111111"
+    lane_hash = event_module.sha256_text("private lane")
+    phase_event, phase_reason = event_module.emit_event(
+        "phase.expected",
+        "due",
+        root=root,
+        attributes={
+            "phase": "wake",
+            "skill": "recall",
+            "trigger": "session_start",
+            "origin": "harness",
+            "requirement": "required",
+            "enforcement": "enforced",
+            "correlation": "exact",
+            "effect": "none",
+            "expectation_id": phase_id,
+            "lane_id_hash": lane_hash,
+            "owner_id_hash": event_module.sha256_text("private owner"),
+            "lease_seconds": 1800,
+        },
+    )
+    check("phase lifecycle vocabulary is observable",
+          phase_reason is None and
+          phase_event["event_type"] == "phase.expected")
+    check("phase lifecycle event/status combinations are locked",
+          {
+              event: event_module.EVENT_STATUSES[event]
+              for event in (
+                  "phase.expected", "skill.loaded", "phase.invoked",
+                  "phase.completed", "phase.skipped", "phase.missed",
+                  "phase.effect_committed", "phase.abandoned",
+              )
+          } == {
+              "phase.expected": {"due"},
+              "skill.loaded": {"observed"},
+              "phase.invoked": {"started"},
+              "phase.completed": {"ok", "failed"},
+              "phase.skipped": {"skipped"},
+              "phase.missed": {"missed"},
+              "phase.effect_committed": {"ok"},
+              "phase.abandoned": {"abandoned"},
+          })
+    loaded = event_module.build_event(
+        "skill.loaded",
+        "observed",
+        attributes={
+            "skill": "recall",
+            "correlation": "unavailable",
+            "lane_id_hash": lane_hash,
+        },
+    )
+    check("skill-load observation accepts only bounded phase metadata",
+          loaded["event_type"] == "skill.loaded" and
+          loaded["attributes"]["skill"] == "recall")
+    check("phase event stores bounded hashes but no raw lane or owner",
+          "private lane" not in json.dumps(phase_event) and
+          "private owner" not in json.dumps(phase_event) and
+          phase_event["attributes"]["lane_id_hash"] == lane_hash)
+    _, phase_enum_reason = event_module.emit_event(
+        "phase.expected",
+        "due",
+        root=root,
+        attributes={
+            **phase_event["attributes"],
+            "phase": "private phase prose",
+        },
+    )
+    check("phase enums reject free-form values",
+          phase_enum_reason == "invalid_event")
+    _, phase_id_reason = event_module.emit_event(
+        "phase.expected",
+        "due",
+        root=root,
+        attributes={
+            **phase_event["attributes"],
+            "expectation_id": "not-a-uuid",
+        },
+    )
+    check("phase lifecycle IDs require UUID-like values",
+          phase_id_reason == "invalid_event")
+    _, phase_content_reason = event_module.emit_event(
+        "phase.expected",
+        "due",
+        root=root,
+        attributes={
+            **phase_event["attributes"],
+            "prompt": "private_prompt_token",
+        },
+    )
+    check("phase events reject content-bearing attributes",
+          phase_content_reason == "invalid_event")
+    _, receipt_leak_reason = event_module.emit_event(
+        "phase.expected",
+        "due",
+        root=root,
+        attributes={
+            **phase_event["attributes"],
+            "receipt_id": "2" * 32,
+        },
+    )
+    check("phase events reject opaque owner receipt tokens",
+          receipt_leak_reason == "invalid_event")
+
+    disabled_file = root / "disabled.jsonl"
+    old_events = os.environ.get("CORTEX_EVENTS")
+    old_file = os.environ.get("CORTEX_EVENTS_FILE")
+    try:
+        os.environ["CORTEX_EVENTS"] = "off"
+        os.environ["CORTEX_EVENTS_FILE"] = str(disabled_file)
+        _, disabled_reason = event_module.emit_event(
+            "retrieval.search", "ok", root=root
+        )
+    finally:
+        if old_events is None:
+            os.environ.pop("CORTEX_EVENTS", None)
+        else:
+            os.environ["CORTEX_EVENTS"] = old_events
+        if old_file is None:
+            os.environ.pop("CORTEX_EVENTS_FILE", None)
+        else:
+            os.environ["CORTEX_EVENTS_FILE"] = old_file
+    check("events can be disabled", disabled_reason == "disabled")
+    check("disabled events create no file", not disabled_file.exists())
+
+    external = root / "external-target"
+    external.write_text("unchanged\n")
+    symlink_sink = root / "symlink-events.jsonl"
+    symlink_sink.symlink_to(external)
+    old_file = os.environ.get("CORTEX_EVENTS_FILE")
+    try:
+        os.environ["CORTEX_EVENTS_FILE"] = "symlink-events.jsonl"
+        _, symlink_reason = event_module.emit_event(
+            "retrieval.fetch", "ok", root=root
+        )
+    finally:
+        if old_file is None:
+            os.environ.pop("CORTEX_EVENTS_FILE", None)
+        else:
+            os.environ["CORTEX_EVENTS_FILE"] = old_file
+    check("symlink event sink is rejected",
+          symlink_reason == "event_write_failed")
+    check("symlink target remains unchanged",
+          external.read_text() == "unchanged\n")
+
+    old_file = os.environ.get("CORTEX_EVENTS_FILE")
+    try:
+        os.environ["CORTEX_EVENTS_FILE"] = str(root / "absolute.jsonl")
+        _, absolute_reason = event_module.emit_event(
+            "retrieval.fetch", "ok", root=root
+        )
+    finally:
+        if old_file is None:
+            os.environ.pop("CORTEX_EVENTS_FILE", None)
+        else:
+            os.environ["CORTEX_EVENTS_FILE"] = old_file
+    check("absolute event sink is rejected",
+          absolute_reason == "event_write_failed")
+
+    parent_root = root / "parent-root"
+    parent_root.mkdir()
+    external_dir = root / "external-events"
+    external_dir.mkdir()
+    (parent_root / ".cortex").symlink_to(external_dir, target_is_directory=True)
+    old_file = os.environ.pop("CORTEX_EVENTS_FILE", None)
+    try:
+        _, parent_reason = event_module.emit_event(
+            "retrieval.fetch", "ok", root=parent_root
+        )
+    finally:
+        if old_file is not None:
+            os.environ["CORTEX_EVENTS_FILE"] = old_file
+    check("symlink event parent is rejected",
+          parent_reason == "event_write_failed")
+    check("symlink event parent receives no data",
+          not (external_dir / "cognition-events.jsonl").exists())
+
+    link_dir = root / "bin"
+    link_dir.mkdir()
+    linked_tool = link_dir / "cognition-event"
+    linked_tool.symlink_to(TOOLS / "cognition-event")
+    linked = subprocess.run(
+        [
+            str(linked_tool), "emit", "retrieval.fetch", "ok",
+            "--ref", "memory/learnings.md::fixture",
+            "--count", "returned=1",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    check("symlinked helper resolves its module", linked.returncode == 0)
+
+    before_concurrent = len(event_file.read_text().splitlines())
+    processes = [
+        subprocess.Popen(
+            [
+                str(linked_tool), "emit", "retrieval.fetch", "ok",
+                "--ref", f"memory/learnings.md::fixture-{index}",
+            ],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for index in range(12)
+    ]
+    results = [process.communicate() + (process.returncode,) for process in processes]
+    check("concurrent appends all succeed",
+          all(returncode == 0 for _, _, returncode in results))
+    parsed = [json.loads(line) for line in event_file.read_text().splitlines()]
+    check("concurrent appends preserve JSONL boundaries",
+          len(parsed) == before_concurrent + 12)
+
+with tempfile.TemporaryDirectory() as tmp:
+    project = Path(tmp)
+    track = project / "workspace/active"
+    track.mkdir(parents=True)
+    (track / "track.md").write_text("# active\n")
+    base_env = dict(
+        os.environ,
+        COPILOT_PLUGIN_ROOT=str(ROOT / "plugins/cortex"),
+        CORTEX_CAPTURE_NUDGE_TURNS="1",
+        CORTEX_DRAIN_NUDGE_COUNT="99",
+        CORTEX_DRAIN_NUDGE_AGE_DAYS="99",
+    )
+
+    def run_hook(session_id, env):
+        return subprocess.run(
+            [str(HOOK)],
+            input=json.dumps({"sessionId": session_id, "cwd": str(project)}),
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    capture = run_hook("capture-session", base_env)
+    check("capture hook still emits one block decision",
+          capture.returncode == 0 and
+          json.loads(capture.stdout)["decision"] == "block")
+
+    intake = track / "intake.md"
+    intake.write_text(
+        "- captured: 2026-07-01  status: open  note: private fixture\n"
+    )
+    drain_env = dict(
+        base_env,
+        CORTEX_CAPTURE_NUDGE_TURNS="99",
+        CORTEX_DRAIN_NUDGE_COUNT="1",
+        CORTEX_DRAIN_NUDGE_AGE_DAYS="99",
+    )
+    drain = run_hook("drain-session", drain_env)
+    check("drain hook still emits one block decision",
+          drain.returncode == 0 and
+          json.loads(drain.stdout)["decision"] == "block")
+
+    intake.write_text(
+        "- captured: 2026-07-01  status: drained  note: private fixture\n"
+    )
+    observed = run_hook("drain-session", drain_env)
+    check("outcome observation does not corrupt hook stdout",
+          observed.returncode == 0 and observed.stdout == "")
+
+    hook_events = [
+        json.loads(line)
+        for line in (project / ".cortex/cognition-events.jsonl")
+        .read_text().splitlines()
+    ]
+    event_names = [event["event_type"] for event in hook_events]
+    check("capture nudge is observable", "intake.capture_nudge" in event_names)
+    check("drain nudge is observable", "intake.drain_nudge" in event_names)
+    check("drain effectiveness is observable",
+          any(event["event_type"] == "intake.drain_outcome"
+              and event["status"] == "effective"
+              for event in hook_events))
+    check("hook events contain no intake text",
+          "private fixture" not in json.dumps(hook_events))
+
+print(f"\n{passed} passed, {failed} failed")
+sys.exit(1 if failed else 0)

@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# intake — jot a perishable observation to a track's fast buffer (the WORK store).
+#
+# Why this exists: capture-as-produced only happens if capture is CHEAP. Hand-writing the §6 intake
+# schema into the right file mid-thought is friction, so it doesn't happen — which is exactly how a
+# whole working session ends with an empty buffer. This makes capture one command: the schema, the
+# date, and lazy-creating the buffer with its header are all handled for you.
+#
+# It writes the fast store ONLY (workspace/<track>/intake.md). It never touches durable memory —
+# draining intake → memory/ is consolidate's (SLEEP's) job, by design.
+#
+# Repo-relative: it writes into whatever git repo you run it in (a consumer's repo when invoked via
+# .cortex/bin/intake, or the cortex repo itself).
+#
+# Usage:
+#   intake "a one-line lesson, friction, surprise, or preference"
+#   intake --track <name> "note"          # required when the repo has >1 active track
+#   intake --track <name> --episode <id> "note"
+#
+# Track resolution, in order: --track → the track whose dir you're inside (cwd under workspace/<t>)
+# → the sole active track (its track.md header ends with "· active") → else error and list choices.
+#
+# Exit: 0 on write; 2 on usage/ambiguity error.
+set -uo pipefail
+
+TRACK=""
+EPISODE="-"
+words=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --track|-t) TRACK="${2:-}"; shift 2 || { echo "intake: --track needs a value" >&2; exit 2; } ;;
+    --episode|-e) EPISODE="${2:-}"; shift 2 || { echo "intake: --episode needs a value" >&2; exit 2; } ;;
+    --) shift; while [ "$#" -gt 0 ]; do words+=("$1"); shift; done ;;
+    -*) echo "intake: unknown flag: $1" >&2; exit 2 ;;
+    *) words+=("$1"); shift ;;
+  esac
+done
+
+note="${words[*]:-}"
+if [ -z "${note// }" ]; then
+  echo "intake: nothing to note. usage: intake [--track <name>] [--episode <id>] \"<one line>\"" >&2
+  exit 2
+fi
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || ROOT="$PWD"
+WS="$ROOT/workspace"
+
+# active tracks = those whose track.md header line ends with "· active"
+actives=()
+if [ -d "$WS" ]; then
+  for f in "$WS"/*/track.md; do
+    [ -f "$f" ] || continue
+    if head -1 "$f" | grep -Eq '·[[:space:]]*active[[:space:]]*$'; then
+      actives+=("$(basename "$(dirname "$f")")")
+    fi
+  done
+fi
+
+# resolve the track
+if [ -z "$TRACK" ]; then
+  rel="${PWD#"$ROOT"/}"
+  case "$rel" in
+    workspace/*) TRACK="$(printf '%s' "$rel" | cut -d/ -f2)" ;;
+  esac
+fi
+if [ -z "$TRACK" ] && [ "${#actives[@]}" -eq 1 ]; then
+  TRACK="${actives[0]}"
+fi
+if [ -z "$TRACK" ]; then
+  {
+    echo "intake: which track? pass --track <name>."
+    if [ "${#actives[@]}" -gt 0 ]; then
+      echo "active tracks: ${actives[*]}"
+    else
+      echo "(no active tracks found under $WS)"
+    fi
+  } >&2
+  exit 2
+fi
+
+DIR="$WS/$TRACK"
+if [ ! -d "$DIR" ]; then
+  echo "intake: no such track: $TRACK (looked in $WS)" >&2
+  exit 2
+fi
+
+F="$DIR/intake.md"
+if [ ! -f "$F" ]; then
+  cat > "$F" <<HEADER
+# intake — $TRACK fast store (WORK buffer)
+
+Perishable, in-flight observations captured the moment they surface, before they're lost to a
+compaction. Raw and unconsolidated — NOT durable memory. \`consolidate\` (SLEEP) drains each note
+(\`status: open → proposed → accepted | rejected → drained\`), never by silent delete.
+
+Schema: \`- captured: <YYYY-MM-DD>  status: <open|proposed|accepted|rejected|drained>  note: <one line>  episode: <id>\`
+
+HEADER
+fi
+
+# one-line the note (collapse any embedded newlines so the schema stays one-record-per-line)
+note="$(printf '%s' "$note" | tr '\n' ' ')"
+printf -- '- captured: %s  status: open  note: %s  episode: %s\n' "$(date +%F)" "$note" "$EPISODE" >> "$F"
+
+echo "intake: noted → workspace/$TRACK/intake.md" >&2
+exit 0

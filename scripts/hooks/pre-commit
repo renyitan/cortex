@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# cortex pre-commit hook — runs the drift lint so consistency drift can't land silently.
+#
+# This is the forcing function: you don't have to remember to check for drift, because
+# a commit that introduces it (a stale projection, a dead link, a skill the roster forgot)
+# fails right here. Silent on success; prints the findings only when it blocks.
+#
+# Optional: activate with `git config core.hooksPath scripts/hooks`.
+# Need to commit anyway? `git commit --no-verify` bypasses it once.
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+[ -x "$ROOT/scripts/cortex-lint" ] || exit 0   # lint absent → don't block commits
+
+out="$("$ROOT/scripts/cortex-lint" --quiet 2>&1)"; rc=$?
+if [ "$rc" != 0 ]; then
+  printf '%s\n\n' "$out"
+  echo "cortex pre-commit: drift found (above). Fix it, or bypass once with: git commit --no-verify"
+  exit 1
+fi
+exit 0

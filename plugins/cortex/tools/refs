@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# refs — list what references a file or term. Reverse lookup, computed on demand.
+#
+# Use it BEFORE a rename to see impact: "if I move/rename this, what must I update?"
+# It stores nothing — no graph to drift. It greps the tracked files each run, because
+# the references already live in the files; that is the source of truth.
+#
+# Repo-relative: it scans whatever git repo you run it in (the consumer's repo when an
+# agent invokes it via .cortex/bin/refs, or the cortex repo itself), NOT its install dir.
+#
+# This is a convenience for doing a rename thoroughly, NOT a drift guard. The guard is the
+# pre-commit lint (dead links + stale projection): for a FILE rename the lint already blocks
+# a missed link at commit; refs just lets you find them upfront. For a CONCEPT/word rename
+# it's a focused `git grep` — nothing does better without a hand-kept wordlist, which
+# cortex deliberately avoids.
+#
+# Usage: refs <path-or-term> [more...]
+# Exit:  0 if any references found, 1 if none.
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "refs: not inside a git repository" >&2; exit 2;
+}
+cd "$ROOT"
+
+[ "$#" -ge 1 ] || { echo "usage: refs <path-or-term> [more...]" >&2; exit 2; }
+
+total=0
+for target in "$@"; do
+  # For an existing path, search both its repo-relative form and its basename (links use
+  # different relative prefixes from different dirs). For a bare term, search it literally.
+  terms=()
+  if [ -e "$target" ]; then
+    rel="${target#./}"; rel="${rel%/}"
+    terms+=("$rel")
+    base="$(basename "$rel")"
+    [ "$base" = "$rel" ] || terms+=("$base")
+  else
+    terms+=("$target")
+  fi
+
+  args=()
+  for t in "${terms[@]}"; do args+=(-e "$t"); done
+
+  printf '\n# references to: %s' "$target"
+  [ "${#terms[@]}" -gt 1 ] && printf '  (matching: %s)' "${terms[*]}"
+  printf '\n'
+
+  hits="$(git grep -nIF "${args[@]}" 2>/dev/null || true)"
+  if [ -n "$hits" ]; then
+    printf '%s\n' "$hits" | sed 's/^/  /'
+    n="$(printf '%s\n' "$hits" | wc -l | tr -d ' ')"
+    total=$((total + n))
+  else
+    echo "  (none)"
+  fi
+done
+
+printf '\n%s reference line(s) found.\n' "$total"
+[ "$total" -gt 0 ]

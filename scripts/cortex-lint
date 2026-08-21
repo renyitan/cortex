@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+# cortex-lint — repo-wide consistency drift check. FLAGS drift; never edits.
+#
+# Why this exists: no skill owns consistency when something derived drifts from its
+# source — a host projection left unregenerated, a link to a moved file, a skill the
+# roster forgot. `curate` is hard-scoped to the two memory stores; the rest is unowned.
+# This lint closes that seam.
+#
+# Principle: it checks only drift it can *derive* from the repo's own structure. It
+# keeps NO blocklist of words — deciding which terms are "allowed" is editorial policy,
+# not drift, and a hand-kept list rots. Every check here compares a derived artifact
+# against the source it should match.
+#
+# It only *surfaces* drift for a human to fix — it never rewrites anything.
+#
+# Checks:
+#   1. dead relative links  — every markdown link resolves to a real file
+#   2. skill roster         — every skill has SKILL.md, name matches dir, listed in plugins/cortex/skills/README.md
+#   3. marketplace validity — marketplace.json + plugin manifests parse; every entry resolves to a real plugin dir
+#   4. version consistency  — the version is identical across plugin.json, .claude-plugin/plugin.json, marketplace.json
+#   5. version-bump pending — (advisory) plugin-shipped source changed since the version was last set
+#   6. memory links         — hard `derives-from:` links resolve; soft `see-also:` links warn if stale
+#   7. record field-set integrity — every memory record carries the full §6 field set (only where memory/ exists)
+#   8. intake debt           — (advisory) undrained intake.md notes piled up or gone stale (only where workspace/ exists)
+#
+# Usage: scripts/cortex-lint [--quiet]
+# Env:   CORTEX_LINT_STATE_ROOT=<consumer-repo> validates memory/workspace state there while
+#        keeping source, manifest, and release checks rooted in the cortex repository.
+# Exit:  0 = clean, 1 = drift found. Advisory warnings never affect the exit code.
+#
+# Run it after any rename, before a commit (the pre-commit hook invokes it).
+set -uo pipefail   # deliberately NOT -e: run every check, then aggregate.
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+SELF="scripts/cortex-lint"
+STATE_ROOT="${CORTEX_LINT_STATE_ROOT:-$ROOT}"
+
+QUIET=0
+for a in "$@"; do
+  case "$a" in
+    --quiet) QUIET=1 ;;
+    *) echo "unknown arg: $a" >&2; exit 2 ;;
+  esac
+done
+
+FINDINGS=0
+WARNINGS=0
+note() { FINDINGS=$((FINDINGS + 1)); printf '  \033[31m✗\033[0m %s\n' "$*"; }
+warn() { WARNINGS=$((WARNINGS + 1)); printf '  \033[33m!\033[0m %s\n' "$*"; }
+ok()   { [ "$QUIET" = 1 ] || printf '  \033[32m✓\033[0m %s\n' "$*"; }
+hd()   { [ "$QUIET" = 1 ] || printf '\n%s\n' "$*"; }
+say()  { printf '%s\n' "$*"; }
+
+# git-tracked files (respects .gitignore; reference clones are siblings, not tracked).
+# Portable array read (macOS ships bash 3.2 — no `mapfile`).
+FILES=()
+while IFS= read -r line; do FILES+=("$line"); done < <(git ls-files | grep -vx "$SELF")
+
+say "cortex-lint (root: $ROOT)"
+
+# 1. dead relative links -----------------------------------------------------
+hd "1. relative markdown links resolve"
+hits=0
+for f in "${FILES[@]}"; do
+  case "$f" in *.md) ;; *) continue ;; esac
+  dir="$(dirname "$f")"
+  while IFS= read -r tgt; do
+    [ -n "$tgt" ] || continue
+    case "$tgt" in http://*|https://*|mailto:*|\#*) continue ;; esac
+    tgt="${tgt%%#*}"; tgt="${tgt%%\?*}"        # strip anchor / query
+    [ -n "$tgt" ] || continue
+    case "$tgt" in /*) p="$ROOT$tgt" ;; *) p="$dir/$tgt" ;; esac
+    [ -e "$p" ] || { note "dead link in $f -> $tgt"; hits=$((hits + 1)); }
+  done < <(grep -oE '\]\([^)]+\)' "$f" 2>/dev/null | sed -E 's/^\]\(//; s/\)$//')
+done
+[ "$hits" = 0 ] && ok "all relative links resolve"
+
+# 2. skill roster ------------------------------------------------------------
+hd "2. skill roster consistent"
+hits=0
+for d in plugins/cortex/skills/*/; do
+  [ -d "$d" ] || continue
+  name="$(basename "$d")"
+  if [ ! -f "$d/SKILL.md" ]; then
+    note "skill '$name': missing SKILL.md"; hits=$((hits + 1)); continue
+  fi
+  decl="$(grep -E '^name:' "$d/SKILL.md" | head -1 | sed -E 's/^name:[[:space:]]*//; s/[[:space:]]*$//')"
+  [ "$decl" = "$name" ] || { note "skill '$name': frontmatter name '$decl' != directory"; hits=$((hits + 1)); }
+  grep -q -- "$name" plugins/cortex/skills/README.md || { note "skill '$name': not listed in plugins/cortex/skills/README.md"; hits=$((hits + 1)); }
+done
+[ "$hits" = 0 ] && ok "every skill has SKILL.md, matching name, and a roster entry"
+
+# 3. marketplace + manifest validity -----------------------------------------
+# The repo IS the marketplace (decision: repo-is-a-marketplace-plugins-cortex). The
+# root .claude-plugin/marketplace.json indexes every shipped plugin; each plugin dir
+# carries its own plugin.json. A host installs straight from these — so a broken
+# manifest or a dangling source is a shipping break, not an advisory.
+hd "3. marketplace + plugin manifests valid"
+hits=0
+MKT=".claude-plugin/marketplace.json"
+json() { python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$1" 2>/dev/null; }
+if [ ! -f "$MKT" ]; then
+  note "missing $MKT (the marketplace index)"; hits=$((hits + 1))
+elif ! json "$MKT"; then
+  note "$MKT is not valid JSON"; hits=$((hits + 1))
+else
+  while IFS= read -r src; do
+    [ -n "$src" ] || continue
+    pdir="${src#./}"
+    if [ ! -d "$pdir" ]; then
+      note "marketplace entry source '$src' resolves to no directory"; hits=$((hits + 1)); continue
+    fi
+    if [ ! -f "$pdir/plugin.json" ]; then
+      note "plugin '$src': missing plugin.json"; hits=$((hits + 1))
+    elif ! json "$pdir/plugin.json"; then
+      note "plugin '$src': plugin.json is not valid JSON"; hits=$((hits + 1))
+    fi
+    [ -f "$pdir/.claude-plugin/plugin.json" ] && ! json "$pdir/.claude-plugin/plugin.json" && \
+      { note "plugin '$src': .claude-plugin/plugin.json is not valid JSON"; hits=$((hits + 1)); }
+  done < <(python3 -c "import json; [print(p['source']) for p in json.load(open('$MKT')).get('plugins',[])]" 2>/dev/null)
+fi
+[ "$hits" = 0 ] && ok "marketplace index and every plugin manifest parse and resolve"
+
+# 4. version consistency -----------------------------------------------------
+# version lives in plugin.json (no VERSION file — decision: repo-is-a-marketplace).
+# It must read identically everywhere it's stamped, or an install ships a lie.
+hd "4. version consistent across manifests"
+ver_of() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('version') or d.get('metadata',{}).get('version',''))" "$1" 2>/dev/null; }
+canon="$(ver_of plugins/cortex/plugin.json)"
+if [ -z "$canon" ]; then
+  note "plugins/cortex/plugin.json has no version (it is canonical)"
+else
+  hits=0
+  for m in plugins/cortex/.claude-plugin/plugin.json "$MKT"; do
+    [ -f "$m" ] || continue
+    v="$(ver_of "$m")"
+    [ "$v" = "$canon" ] || { note "version mismatch: $m is '$v', expected '$canon'"; hits=$((hits + 1)); }
+  done
+  [ "$hits" = 0 ] && ok "every manifest agrees: v$canon"
+fi
+
+# 5. version-bump pending (ADVISORY — never blocks) --------------------------
+# version tracks the DISTRIBUTED artifact: exactly what installs into a host.
+# Bump iff shipped content changes. We approximate offline: did any file under the
+# plugin change since the commit that last touched the version line in plugin.json,
+# with no new bump? If so, a bump is probably owed.
+hd "5. version tracks distributed content"
+BUNDLED=(plugins/cortex CHANGELOG.md)
+vcommit="$(git log -1 --format=%H -G'"version"' -- plugins/cortex/plugin.json 2>/dev/null || true)"
+if [ -z "$vcommit" ]; then
+  ok "no version history reachable — skipping (shallow clone or fresh repo)"
+elif oldcanon="$(git show "$vcommit:plugins/cortex/plugin.json" 2>/dev/null | \
+  python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null)" \
+  && [ -n "$oldcanon" ] && [ "$oldcanon" != "$canon" ]; then
+  ok "pending v$oldcanon → v$canon bump covers shipped working-tree changes"
+elif git diff --quiet "$vcommit" -- "${BUNDLED[@]}" 2>/dev/null; then
+  ok "shipped files unchanged since the v$canon bump"
+else
+  warn "shipped files changed since the v$canon bump ($(git rev-parse --short "$vcommit" 2>/dev/null)) with no new bump:"
+  if [ "$QUIET" != 1 ]; then
+    git diff --name-only "$vcommit" -- "${BUNDLED[@]}" 2>/dev/null | sed 's/^/      /'
+    printf '      → bump version in plugin.json (+ siblings) and add a CHANGELOG entry, or confirm the change is non-shipped.\n'
+  fi
+fi
+
+# 6. link references resolve -------------------------------------------------
+# A record's optional `derives-from:` (vertical/provenance) and `see-also:` (lateral/association)
+# lines name the `### <key>`s they point at (§6 schema). A dangling `derives-from:` is a hard
+# provenance failure; a dangling `see-also:` is a soft advisory because it cannot orphan a record.
+# The records live in the CONSUMER's stores, not in cortex's own repo
+# (cortex shed its memory/), so this check is memory-aware: it runs only where memory/learnings.md or
+# memory/decisions.md exist, and is a clean no-op in the bare substrate.
+hd "6. link references resolve"
+STORES=()
+for s in memory/learnings.md memory/decisions.md; do
+  [ -f "$STATE_ROOT/$s" ] && STORES+=("$STATE_ROOT/$s")
+done
+if [ "${#STORES[@]}" = 0 ]; then
+  ok "no memory stores here — skipping (substrate repo, nothing to check)"
+else
+  keys="$(grep -hE '^### ' "${STORES[@]}" 2>/dev/null | sed -E 's/^### +//; s/ +(·|\|).*$//; s/ +$//')"
+  hard_hits=0
+  soft_hits=0
+  duplicates="$(printf '%s\n' "$keys" | sort | uniq -d)"
+  if [ -n "$duplicates" ]; then
+    while IFS= read -r key; do
+      [ -n "$key" ] || continue
+      note "duplicate memory key -> '$key' has no unique stable reference"
+      hard_hits=$((hard_hits + 1))
+    done <<< "$duplicates"
+  fi
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    field="${line%%:*}"
+    refs="${line#*:}"
+    IFS=',' read -ra parts <<< "$refs"
+    for k in "${parts[@]}"; do
+      k="$(printf '%s' "$k" | sed -E 's/#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
+      [ -n "$k" ] || continue
+      if ! printf '%s\n' "$keys" | grep -qxF "$k"; then
+        if [ "$field" = "derives-from" ]; then
+          note "dangling $field -> '$k' resolves to no record"
+          hard_hits=$((hard_hits + 1))
+        else
+          warn "dangling $field -> '$k' resolves to no record"
+          soft_hits=$((soft_hits + 1))
+        fi
+      fi
+    done
+  done < <(grep -hE '^(derives-from|see-also):' "${STORES[@]}" 2>/dev/null)
+  [ "$hard_hits" = 0 ] && [ "$soft_hits" = 0 ] && \
+    ok "every derives-from / see-also key resolves to a record"
+fi
+
+# 7. record field-set integrity ---------------------------------------------
+# Every memory record (§6 schema) must carry the full field set so tools that scan,
+# index, and dedup can rely on the canonical form. Memory-aware like check 6: runs only
+# where the consumer's stores exist, a clean no-op in the bare substrate. Required on every
+# record: insight, trigger, tags, evidence, source (+ scope on that line), updated.
+hd "7. record field-set integrity"
+STORES7=()
+for s in memory/learnings.md memory/decisions.md; do
+  [ -f "$STATE_ROOT/$s" ] && STORES7+=("$STATE_ROOT/$s")
+done
+if [ "${#STORES7[@]}" = 0 ]; then
+  ok "no memory stores here — skipping (substrate repo, nothing to check)"
+else
+  miss="$(python3 - "${STORES7[@]}" <<'PY'
+import re, sys
+required = ["insight", "trigger", "tags", "evidence", "source", "updated"]
+problems = []
+for path in sys.argv[1:]:
+    key = None
+    fields = set()
+    src_has_scope = False
+    in_fence = False
+    def flush():
+        if key is None:
+            return
+        for r in required:
+            if r not in fields:
+                problems.append(f"{path}: '{key}' missing '{r}:'")
+        if "source" in fields and not src_has_scope:
+            problems.append(f"{path}: '{key}' source line missing 'scope:'")
+    for line in open(path, encoding="utf-8"):
+        if re.match(r"^\s*(\x60{3}|~{3})", line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if line.startswith("### "):
+            flush()
+            key = re.sub(r"\s+(·|\|).*$", "", line[4:]).strip()
+            fields = set(); src_has_scope = False
+        elif key is not None:
+            m = re.match(r"^([a-z-]+):", line)
+            if m:
+                fields.add(m.group(1))
+                if m.group(1) == "source" and "scope:" in line:
+                    src_has_scope = True
+    flush()
+for p in problems:
+    print(p)
+PY
+)"
+  if [ -n "$miss" ]; then
+    while IFS= read -r m; do note "$m"; done <<< "$miss"
+  else
+    ok "every record carries the full field set"
+  fi
+fi
+
+# 8. intake debt (advisory — never blocks) ----------------------------------
+# The Phase-1 forcing function made physical: an undrained intake.md is consolidation debt.
+# Memory-aware like checks 6/7 — runs only where a consumer's workspace/ exists; a clean
+# no-op in the bare substrate. Warns (never blocks — SLEEP is the agent's judgment) when
+# undrained notes (status: open|proposed) pile up (>20) or go stale (>7 days).
+hd "8. intake debt (advisory)"
+INTAKES=()
+if [ -d "$STATE_ROOT/workspace" ]; then
+  while IFS= read -r line; do INTAKES+=("$line"); done < <(
+    find "$STATE_ROOT/workspace" -type f -name intake.md 2>/dev/null | sort
+  )
+fi
+if [ "${#INTAKES[@]}" = 0 ]; then
+  ok "no intake buffers here — skipping (substrate repo or none open)"
+else
+  report="$(python3 - "${INTAKES[@]}" <<'PY'
+import re, sys, datetime
+today = datetime.date.today()
+for path in sys.argv[1:]:
+    n = 0; oldest = None
+    for line in open(path, encoding="utf-8"):
+        if not re.search(r"status:\s*(open|proposed)\b", line):
+            continue
+        n += 1
+        m = re.search(r"captured:\s*(\d{4})-(\d{2})-(\d{2})", line)
+        if m:
+            try:
+                d = datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                age = (today - d).days
+                oldest = age if oldest is None else max(oldest, age)
+            except ValueError:
+                pass
+    if n > 20 or (oldest is not None and oldest > 7):
+        bits = [f"{n} undrained note(s)"]
+        if oldest is not None:
+            bits.append(f"oldest {oldest}d")
+        print(f"{path}: {', '.join(bits)} — SLEEP (consolidate) is overdue")
+PY
+)"
+  if [ -n "$report" ]; then
+    while IFS= read -r m; do warn "$m"; done <<< "$report"
+  else
+    ok "intake buffers are drained or fresh"
+  fi
+fi
+
+# summary --------------------------------------------------------------------
+printf '\n'
+if [ "$FINDINGS" = 0 ]; then
+  if [ "$WARNINGS" = 0 ]; then
+    say "cortex-lint: clean — no drift."
+  else
+    say "cortex-lint: clean — no drift ($WARNINGS advisory warning(s) above)."
+  fi
+  exit 0
+else
+  say "cortex-lint: $FINDINGS finding(s) — surface only, nothing was changed."
+  exit 1
+fi

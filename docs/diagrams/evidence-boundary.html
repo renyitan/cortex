@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Cortex evidence boundary</title>
+  <style>
+/* ============================================================
+   diagram kit — a composable system, not a set of templates
+   ------------------------------------------------------------
+   You assemble a diagram from PRIMITIVES that auto-lay-out, then
+   draw connectors with wire.js (which attaches arrows to elements
+   by id, computed from the rendered layout — no pixel math). Swap
+   the :root tokens to re-skin everything; the kit is brand-neutral
+   by default.
+
+   THE MODEL
+     .diagram            the canvas (dotted grid, holds a wires overlay)
+       svg.wires         connector overlay (wire.js draws into this)
+       .stack            vertical flow of lanes (architecture)
+         .lane           a labelled horizontal band
+       .row / .col       flex containers — nodes flow & space themselves
+         .node           a role-coloured card (the atom)  [give it an id]
+         .cluster        a bordered group of nodes with a label
+         .note           a free-floating annotation
+
+   ROLE is meaning, not hue. Colour a node by what it IS via
+   data-role="brand|agent|skill|out|gap|neutral". Swap the six
+   --role-* tokens to re-theme every diagram's semantics at once.
+
+   This is a living kit — see SKILL.md "Kit changelog" for the
+   iteration log. Improve it in place; don't fork it per diagram.
+   ============================================================ */
+
+:root {
+  /* ---- type ---- */
+  --font-ui:   "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+  --fw-regular:400; --fw-medium:500; --fw-semibold:600; --fw-bold:700; --fw-black:800;
+
+  /* ---- corner radius ---- */
+  --r-sm:4px; --r-md:8px; --r-lg:12px; --r-xl:16px; --r-pill:10000px;
+
+  /* ---- elevation (two-layer, soft) ---- */
+  --shadow-1: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.04);
+  --shadow-2: 0 2px 6px rgba(16,24,40,.06), 0 6px 16px rgba(16,24,40,.07);
+  --shadow-3: 0 8px 28px rgba(16,24,40,.10);
+
+  /* ---- ink + surface ---- */
+  --ink-1:#101828; --ink-2:#344054; --ink-3:#667085; --ink-4:#98a2b3;
+  --surface:#ffffff; --surface-2:#fbfcfd; --surface-3:#f4f6f8;
+  --line-1:#e4e7ec; --line-2:#eef0f3;
+  --grid-dot:#dfe3ea;          /* the canvas dot colour */
+
+  /* ============================================================
+     ROLE palette — pick by what a node IS, not its hue.
+     Each role carries a line colour, a soft fill, and an ink.
+     ============================================================ */
+  --brand:#2563eb;     --brand-fill:#eff4ff;     --brand-ink:#1d4ed8;
+  --agent:#7c3aed;     --agent-fill:#f5f1fe;     --agent-ink:#6d28d9;
+  --skill:#0d9488;     --skill-fill:#effbf8;     --skill-ink:#0f766e;
+  --out:#0891b2;       --out-fill:#ecfbff;       --out-ink:#0e7490;
+  --gap:#e11d48;       --gap-fill:#fff1f3;       --gap-ink:#be123c;
+  --neutral:#64748b;   --neutral-fill:#f4f6f8;   --neutral-ink:#475569;
+
+  /* ---- connector defaults (wire.js reads these) ---- */
+  --edge:#94a3b8; --edge-w:2; --edge-label-bg:#ffffff;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ---- the canvas ---- */
+.diagram {
+  position: relative; display: inline-block;
+  font-family: var(--font-ui); color: var(--ink-1);
+  padding: 40px;
+  background:
+    radial-gradient(circle at 1px 1px, var(--grid-dot) 1.2px, transparent 0) -1px -1px / 22px 22px,
+    var(--surface);
+}
+.diagram .title { font-size:13px; font-weight:var(--fw-bold); letter-spacing:.02em; color:var(--ink-1); margin-bottom:2px; }
+.diagram .subtitle { font-size:12px; color:var(--ink-3); margin-bottom:20px; font-weight:var(--fw-medium); }
+
+svg.wires { position:absolute; inset:0; z-index:1; pointer-events:none; overflow:visible; }
+
+/* ---- layout containers (auto-flow, no pixel math) ---- */
+.row   { position:relative; z-index:2; display:flex; flex-direction:row; align-items:center; gap:56px; }
+.col   { position:relative; z-index:2; display:flex; flex-direction:column; gap:20px; }
+.stack { position:relative; z-index:2; display:flex; flex-direction:column; gap:28px; }
+.wrap  { flex-wrap:wrap; }
+.grow > * { flex:1 1 0; }
+
+/* ---- the node: the atom ---- */
+.node {
+  position:relative; z-index:2; isolation:isolate;
+  min-width:170px; max-width:260px;
+  background:var(--surface); border:1px solid var(--line-1);
+  border-radius:var(--r-lg); box-shadow:var(--shadow-2);
+  padding:16px 18px 16px 20px; overflow:hidden;
+  display:flex; flex-direction:column; gap:5px;
+}
+/* the signature: a gradient role rail down the left edge */
+.node::before {
+  content:""; position:absolute; left:0; top:0; bottom:0; width:5px;
+  background:linear-gradient(180deg, var(--_role), color-mix(in srgb, var(--_role) 55%, #ffffff));
+}
+.node .kind  { font-size:10.5px; font-weight:var(--fw-bold); letter-spacing:.08em; text-transform:uppercase; color:var(--_ink); }
+.node .name  { font-size:15px; font-weight:var(--fw-semibold); line-height:1.3; color:var(--ink-1); overflow-wrap:anywhere; }
+.node .desc  { font-size:12.5px; line-height:1.45; color:var(--ink-2); font-weight:var(--fw-regular); overflow-wrap:anywhere; }
+.node .meta  { margin-top:6px; font-size:11px; color:var(--ink-3); font-weight:var(--fw-medium); font-family:var(--font-mono); }
+
+/* role binding — set the two private vars, the rest cascades */
+.node[data-role="brand"]   { --_role:var(--brand);   --_ink:var(--brand-ink);   }
+.node[data-role="agent"]   { --_role:var(--agent);   --_ink:var(--agent-ink);   }
+.node[data-role="skill"]   { --_role:var(--skill);   --_ink:var(--skill-ink);   }
+.node[data-role="out"]     { --_role:var(--out);     --_ink:var(--out-ink);     }
+.node[data-role="gap"]     { --_role:var(--gap);     --_ink:var(--gap-ink);     }
+.node[data-role="neutral"],
+.node:not([data-role])     { --_role:var(--neutral); --_ink:var(--neutral-ink); }
+
+/* a faint role wash so colour reads even at a glance */
+.node[data-tint]::after {
+  content:""; position:absolute; inset:0; z-index:-1; opacity:.5;
+  background:linear-gradient(180deg, var(--_fill), transparent 60%);
+}
+.node[data-role="brand"][data-tint]{ --_fill:var(--brand-fill); }
+.node[data-role="agent"][data-tint]{ --_fill:var(--agent-fill); }
+.node[data-role="skill"][data-tint]{ --_fill:var(--skill-fill); }
+.node[data-role="out"][data-tint]  { --_fill:var(--out-fill);   }
+.node[data-role="gap"][data-tint]  { --_fill:var(--gap-fill);   }
+
+/* the gap: a thing that should exist but doesn't yet */
+.node[data-role="gap"] { border:1.5px dashed var(--gap); box-shadow:none; background:var(--gap-fill); }
+
+/* size + shape variants */
+.node.lg   { min-width:220px; padding:20px 22px 20px 24px; }
+.node.sm   { min-width:130px; max-width:200px; padding:11px 13px 11px 15px; gap:2px; }
+.node.sm .name { font-size:13.5px; }
+.node.chip { min-width:0; flex-direction:row; align-items:center; gap:8px; border-radius:var(--r-pill);
+  padding:8px 16px 8px 18px; box-shadow:var(--shadow-1); }
+.node.chip .name { font-size:13px; }
+.node.chip::before { width:4px; border-radius:var(--r-pill) 0 0 var(--r-pill); }
+
+/* ---- cluster: a bordered group with a corner label ---- */
+.cluster {
+  position:relative; border:1.5px dashed var(--line-1); border-radius:var(--r-xl);
+  padding:30px 18px 18px; background:color-mix(in srgb, var(--surface-3) 60%, transparent);
+}
+/* No z-index here: as a positioned z-index:auto box, the panel paints BELOW the
+   wires (svg.wires z-index:1) while child nodes (z-index:2) still paint above them.
+   Setting z-index:2 here would paint the panel over the wires AND trap the nodes. */
+.cluster > .label {
+  position:absolute; top:-11px; left:16px; background:var(--surface);
+  font-size:11px; font-weight:var(--fw-bold); letter-spacing:.04em; text-transform:uppercase;
+  color:var(--ink-3); padding:2px 10px; border:1px solid var(--line-1); border-radius:var(--r-pill);
+}
+
+/* ---- lane: a labelled architecture band ---- */
+.lane {
+  position:relative; border:1px solid var(--line-1); border-radius:var(--r-xl);
+  background:var(--surface-2); box-shadow:var(--shadow-1); padding:16px 18px;
+}
+/* same as .cluster: no z-index, so the band sits under the wires and over nothing else */
+.lane > .head { display:flex; align-items:baseline; gap:10px; margin-bottom:14px; }
+.lane > .head .label { font-size:13px; font-weight:var(--fw-bold); color:var(--ink-1); }
+.lane > .head .cap   { font-size:11.5px; color:var(--ink-3); font-weight:var(--fw-medium); }
+
+/* ---- annotations ---- */
+.badge { position:absolute; top:-10px; right:14px; z-index:3; background:var(--gap); color:#fff;
+  font-size:10px; font-weight:var(--fw-bold); letter-spacing:.05em; padding:3px 9px; border-radius:var(--r-pill); }
+.note { z-index:2; font-size:12px; color:var(--ink-3); font-weight:var(--fw-medium);
+  background:var(--surface); border:1px dashed var(--line-1); border-radius:var(--r-md); padding:8px 12px; max-width:220px; }
+.pill { display:inline-flex; align-items:center; gap:4px; font-size:10.5px; font-weight:var(--fw-semibold);
+  padding:2px 9px; border-radius:var(--r-pill); }
+.pill.green { background:var(--skill-fill); color:var(--skill-ink); }
+.pill.blue  { background:var(--brand-fill); color:var(--brand-ink); }
+.pill.rose  { background:var(--gap-fill);   color:var(--gap-ink);   }
+
+</style>
+  <style>
+/* ============================================================
+   gravure.css — publication-figure preset for the diagram kit
+   ------------------------------------------------------------
+   Load after kit.css. Add class="diagram gravure" to the canvas
+   element. All kit primitives and wire.js work unchanged;
+   gravure overrides tokens and selective styles to produce
+   editorial technical figures.
+
+   The name comes from intaglio gravure printing: precision, ink
+   authority, clean impression. Principle: "Ink earns its place."
+
+   PALETTE: six warm, muted role colours with WCAG AA non-text
+   contrast (>= 3:1) against the linen canvas (#FAF7F2). Tested
+   for deuteranopia and protanopia distinguishability. Roles
+   encode redundantly through top-rule weight + kind label + fill
+   tone, so colour is never the sole carrier.
+
+   See DESIGN.md for the full design rationale, evidence links,
+   and SAFE/RISK breakdown.
+   ============================================================ */
+
+/* ---- token overrides (scoped to .gravure) ---- */
+.diagram.gravure {
+  /* ---- canvas ---- */
+  --surface:   #FAF7F2;
+  --surface-2: #F3EDE5;
+  --surface-3: #E8E2DA;
+  --grid-dot:  transparent;          /* no dot grid */
+
+  /* ---- ink hierarchy ---- */
+  --ink-1: #1C1917;
+  --ink-2: #44403C;
+  --ink-3: #756E69;
+  --ink-4: #A8A29E;
+
+  /* ---- lines ---- */
+  --line-1: #CEC9C1;
+  --line-2: #DDD8D1;
+
+  /* ---- tight editorial radii ---- */
+  --r-sm: 1px;  --r-md: 2px;  --r-lg: 3px;  --r-xl: 4px;
+
+  /* ---- no elevation ---- */
+  --shadow-1: none;  --shadow-2: none;  --shadow-3: none;
+
+  /* ---- role palette ----
+     Warm, desaturated. Each triple: line/rule + soft fill + dark ink.
+     Hues: blue, amber, green, purple, orange, grey — the Okabe-Ito-
+     safe categories. No hex values copied from any reference palette. */
+  --brand:   #2B5F9E;  --brand-fill:   #E8EEF5;  --brand-ink:   #1E4574;
+  --agent:   #9E7B2B;  --agent-fill:   #F2ECDF;  --agent-ink:   #7A5F1E;
+  --skill:   #2B8A6A;  --skill-fill:   #E2F0EA;  --skill-ink:   #1E6E56;
+  --out:     #7A5B9E;  --out-fill:     #EDE8F3;  --out-ink:     #5E4580;
+  --gap:     #C45A2E;  --gap-fill:     #F7EAE3;  --gap-ink:     #963F22;
+  --neutral: #605A54;  --neutral-fill:  #EDEBE8;  --neutral-ink: #44403C;
+
+  /* ---- connectors ---- */
+  --edge:          #756E69;
+  --edge-w:        1.5;
+  --edge-label-bg: #FAF7F2;
+
+  /* ---- figure typography ---- */
+  --font-fig: "Georgia", "Palatino Linotype", "Book Antiqua", "Palatino", serif;
+}
+
+
+/* ============================================================
+   CANVAS
+   ============================================================ */
+.diagram.gravure {
+  background: var(--surface);        /* plain linen, no dot grid */
+  padding: 36px 40px 28px;
+}
+
+
+/* ============================================================
+   FIGURE NUMBER + CAPTION
+   ============================================================ */
+.diagram.gravure .fig-nr {
+  font: var(--fw-bold) 13px/1 var(--font-fig);
+  color: var(--ink-1);
+  letter-spacing: 0.02em;
+}
+.diagram.gravure > .fig-nr {
+  margin-bottom: 2px;
+}
+.diagram.gravure > .fig-caption > .fig-nr {
+  margin-right: 0.2em;
+}
+.diagram.gravure > .fig-caption {
+  font: var(--fw-regular) 12.5px/1.5 var(--font-ui);
+  color: var(--ink-2);
+  max-width: none;
+  margin-bottom: 22px;
+}
+/* .title/.subtitle also restyle for gravure when used instead of fig- classes */
+.diagram.gravure > .title {
+  font: var(--fw-bold) 13px/1.2 var(--font-fig);
+  letter-spacing: 0.015em;
+  margin-bottom: 2px;
+}
+.diagram.gravure > .subtitle {
+  font: var(--fw-regular) 12px/1.5 var(--font-ui);
+  color: var(--ink-3);
+  margin-bottom: 20px;
+}
+
+
+/* ============================================================
+   NODE — top-rule, no shadow, tight radius
+   ============================================================ */
+.diagram.gravure .node {
+  border-radius: var(--r-lg);
+  box-shadow: none;
+  border: 1px solid var(--line-1);
+  padding: 16px 16px 14px 16px;     /* even padding (no left-rail inset) */
+}
+
+/* Replace left gradient rail with a solid top rule.
+   The four properties override the kit.css ::before which is
+   left:0 top:0 bottom:0 width:5px.                           */
+.diagram.gravure .node::before {
+  left: 0; right: 0; top: 0; bottom: auto;
+  width: auto;  height: 3px;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: var(--_role);          /* solid, not gradient */
+}
+
+/* ---- per-role rule weights (greyscale discriminability) ---- */
+
+/* brand / agent: heavy 4 px rule — entry points and orchestrators */
+.diagram.gravure .node[data-role="brand"]::before,
+.diagram.gravure .node[data-role="agent"]::before {
+  height: 4px;
+}
+
+/* skill: default 3 px — operational transforms */
+/* (no override needed, 3 px is the base) */
+
+/* out: 3 px top + 2 px coloured bottom border — produced artifacts */
+.diagram.gravure .node[data-role="out"] {
+  border-bottom: 2px solid var(--out);
+}
+
+/* gap: segmented top rule + diagonal hatch background */
+.diagram.gravure .node[data-role="gap"] {
+  border: 1.5px dashed var(--gap);
+  box-shadow: none;
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      var(--gap-fill) 0, var(--gap-fill) 4px,
+      color-mix(in srgb, var(--gap-fill) 60%, var(--gap)) 4px,
+      color-mix(in srgb, var(--gap-fill) 60%, var(--gap)) 5px
+    );
+}
+.diagram.gravure .node[data-role="gap"]::before {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      var(--_role) 0, var(--_role) 6px,
+      transparent 6px, transparent 11px
+    );
+}
+
+/* neutral: thin 1.5 px rule — infrastructure / plumbing */
+.diagram.gravure .node[data-role="neutral"]::before,
+.diagram.gravure .node:not([data-role])::before {
+  height: 1.5px;
+}
+
+/* Direct edge labels stay compact enough to fit between adjacent nodes. */
+.diagram.gravure .edge-label {
+  background: var(--surface);
+  border: 0;
+  border-radius: var(--r-sm);
+  box-shadow: none;
+  padding: 2px 5px;
+  font-size: 10px;
+}
+
+/* tint wash: simpler for gravure — solid fill, no gradient */
+.diagram.gravure .node[data-tint]::after {
+  background: var(--_fill);
+  opacity: 0.55;
+}
+
+/* chip variant */
+.diagram.gravure .node.chip {
+  border-radius: var(--r-pill);
+  padding: 7px 14px 7px 14px;
+}
+.diagram.gravure .node.chip::before {
+  border-radius: var(--r-pill) var(--r-pill) 0 0;
+  height: 2.5px;
+}
+
+
+/* ============================================================
+   LANE + CLUSTER — editorial simplicity
+   ============================================================ */
+.diagram.gravure .lane {
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-xl);
+  background: var(--surface-2);
+  box-shadow: none;
+}
+
+.diagram.gravure .cluster {
+  border: 1.5px dashed var(--line-1);
+  border-radius: var(--r-xl);
+  background: color-mix(in srgb, var(--surface-3) 40%, transparent);
+}
+.diagram.gravure .cluster > .label {
+  background: var(--surface);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-pill);
+}
+
+
+/* ============================================================
+   EVIDENCE / CERTAINTY ANNOTATIONS
+   ============================================================ */
+.diagram.gravure .evidence {
+  display: inline-flex; align-items: center; gap: 4px;
+  font: var(--fw-semibold) 10px/1 var(--font-ui);
+  color: var(--ink-3);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-pill);
+  padding: 2px 8px;
+  background: var(--surface);
+  z-index: 2;
+}
+.diagram.gravure .evidence::before { content: "\2295"; font-size: 11px; } /* ⊕ */
+.diagram.gravure .evidence.uncertain::before { content: "?"; font-weight: var(--fw-bold); }
+.diagram.gravure .evidence.unproven::before  { content: "\2298"; }        /* ⊘ */
+
+
+/* ============================================================
+   STEP NUMBER — circled ordinal
+   ============================================================ */
+.diagram.gravure .step-nr {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px;
+  font: var(--fw-bold) 11px/1 var(--font-fig);
+  color: var(--surface);
+  background: var(--ink-1);
+  border-radius: 50%;
+  z-index: 2;
+}
+
+
+/* ============================================================
+   NOTE — editorial left-accent
+   ============================================================ */
+.diagram.gravure .note {
+  border: 1px solid var(--line-1);
+  border-left: 3px solid var(--ink-4);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font: var(--fw-regular) 11.5px/1.5 var(--font-ui);
+  color: var(--ink-3);
+}
+
+
+/* ============================================================
+   BADGE — muted
+   ============================================================ */
+.diagram.gravure .badge {
+  background: var(--gap);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+}
+
+
+/* ============================================================
+   PILL — outlined, not filled
+   ============================================================ */
+.diagram.gravure .pill {
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  border: 1px solid currentColor;
+  background: transparent;
+}
+.diagram.gravure .pill.green { color: var(--skill); background: var(--skill-fill); }
+.diagram.gravure .pill.blue  { color: var(--brand); background: var(--brand-fill); }
+.diagram.gravure .pill.rose  { color: var(--gap);   background: var(--gap-fill); }
+
+</style>
+  <style>
+    body { margin: 0; background: #e8e2da; padding: 32px; }
+    .diagram { min-width: 1436px; }
+    .evidence-flow { align-items: stretch; gap: 108px; }
+    .evidence-flow .cluster { width: 624px; padding: 34px 18px 18px; }
+    .evidence-flow .cluster > .row { gap: 68px; align-items: stretch; }
+    .evidence-flow .node { min-width: 0; width: 150px; min-height: 152px; justify-content: center; }
+  </style>
+</head>
+<body>
+  <div class="diagram gravure">
+    <div class="fig-caption"><span class="fig-nr">Figure 3.</span>
+      The Cortex evidence boundary. Repository tests and local records
+      establish implementation properties; they do not establish delivery to the model, model use,
+      or improved task outcomes.</div>
+
+    <div class="col" style="gap: 42px">
+      <div class="row evidence-flow">
+        <div class="cluster">
+          <span class="label">Established by repository evidence</span>
+          <div class="row">
+            <div class="node sm" data-role="brand" data-tint id="ev-tests">
+              <span class="kind">source</span>
+              <span class="name">Deterministic tests</span>
+              <span class="desc">Exercise manifests, retrieval, events, phases, and writes</span>
+            </div>
+
+            <div class="node sm" data-role="skill" data-tint id="ev-mechanisms">
+              <span class="kind">checked property</span>
+              <span class="name">Inspectable mechanisms</span>
+              <span class="desc">Hooks, projections, validation, and local state boundaries</span>
+            </div>
+
+            <div class="node sm" data-role="out" data-tint id="ev-records">
+              <span class="kind">local evidence</span>
+              <span class="name">Execution records</span>
+              <span class="desc">Events and receipts show what a Cortex mechanism observed</span>
+              <span class="evidence" style="margin-top: 5px">mechanism only</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="cluster">
+          <span class="label">Not established</span>
+          <div class="row">
+            <div class="node sm" data-role="gap" id="ev-delivery">
+              <span class="kind">unproven</span>
+              <span class="name">Model delivery</span>
+              <span class="desc">Did recalled content enter model context?</span>
+              <span class="evidence unproven" style="margin-top: 5px">no public evidence</span>
+            </div>
+
+            <div class="node sm" data-role="gap" id="ev-use">
+              <span class="kind">unproven</span>
+              <span class="name">Model use</span>
+              <span class="desc">Did the model attend to or follow that content?</span>
+            </div>
+
+            <div class="node sm" data-role="gap" id="ev-outcome">
+              <span class="kind">unproven</span>
+              <span class="name">Better outcomes</span>
+              <span class="desc">Did memory improve task quality or reliability?</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+/* ============================================================
+   wire.js — the auto-connector that makes the kit composable
+   ------------------------------------------------------------
+   You lay out .node elements with the layout primitives and give
+   each an id. wire.js then draws SVG arrows BETWEEN them by id,
+   computing attach points from the rendered DOM — so a connector
+   always follows the layout. No magic coordinates, ever.
+
+   USAGE  (in an example, after the markup)
+     <script src="../wire.js"><\/script>
+     <script>
+       wireAll([
+         ["user", "agent"],
+         ["agent", "skill", { label: "invoke" }],
+         ["skill", "out",   { color: "skill" }],
+         ["agent", "gap",   { dashed: true, color: "gap", label: "missing" }],
+       ]);
+     <\/script>
+
+   EDGE OPTIONS
+     color   role name (brand|agent|skill|out|gap|neutral) or any CSS colour. default --edge
+     dashed  true -> dashed line (use for "planned / missing / optional")
+     label   text chip floated at the midpoint
+     from    force the exit side:  'r' | 'l' | 't' | 'b'
+     to      force the entry side: 'r' | 'l' | 't' | 'b'
+     curve   bend strength 0..1 (default .5; 0 = straight)
+
+   Runs on window load so the layout is final before we measure.
+   ============================================================ */
+(function () {
+  const ROLES = ["brand", "agent", "skill", "out", "gap", "neutral"];
+  const pending = [];
+
+  function resolveColor(c, host) {
+    if (!c) return getCssVar("--edge", host) || "#94a3b8";
+    if (ROLES.includes(c)) return getCssVar("--" + c, host) || c;
+    return c;
+  }
+  function getCssVar(name, host) {
+    return getComputedStyle(host || document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function localRect(el, host) {
+    const r = el.getBoundingClientRect();
+    const h = host.getBoundingClientRect();
+    return {
+      left: r.left - h.left, top: r.top - h.top,
+      right: r.right - h.left, bottom: r.bottom - h.top,
+      cx: (r.left + r.right) / 2 - h.left,
+      cy: (r.top + r.bottom) / 2 - h.top,
+      w: r.width, h: r.height,
+    };
+  }
+
+  function anchor(rect, side) {
+    switch (side) {
+      case "r": return { x: rect.right, y: rect.cy, nx: 1, ny: 0 };
+      case "l": return { x: rect.left, y: rect.cy, nx: -1, ny: 0 };
+      case "t": return { x: rect.cx, y: rect.top, nx: 0, ny: -1 };
+      case "b": return { x: rect.cx, y: rect.bottom, nx: 0, ny: 1 };
+    }
+  }
+
+  function chooseSides(a, b, opt) {
+    const dx = b.cx - a.cx, dy = b.cy - a.cy;
+    let fromSide = opt.from, toSide = opt.to;
+    if (!fromSide || !toSide) {
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        fromSide = fromSide || (dx > 0 ? "r" : "l");
+        toSide = toSide || (dx > 0 ? "l" : "r");
+      } else {
+        fromSide = fromSide || (dy > 0 ? "b" : "t");
+        toSide = toSide || (dy > 0 ? "t" : "b");
+      }
+    }
+    return [fromSide, toSide];
+  }
+
+  function bezierPoint(p0, p1, p2, p3, t) {
+    const mt = 1 - t;
+    const a = mt * mt * mt, b = 3 * mt * mt * t, c = 3 * mt * t * t, d = t * t * t;
+    return {
+      x: a * p0.x + b * p1.x + c * p2.x + d * p3.x,
+      y: a * p0.y + b * p1.y + c * p2.y + d * p3.y,
+    };
+  }
+
+  // orthogonal (elbow) routing: right-angle path that enters each
+  // node perpendicular to its side — the clean org-chart / tree look.
+  function elbowPoints(pA, fs, pB, ts) {
+    const fv = fs === "t" || fs === "b";
+    const tv = ts === "t" || ts === "b";
+    if (fv && tv) { const my = (pA.y + pB.y) / 2; return [pA, { x: pA.x, y: my }, { x: pB.x, y: my }, pB]; }
+    if (!fv && !tv) { const mx = (pA.x + pB.x) / 2; return [pA, { x: mx, y: pA.y }, { x: mx, y: pB.y }, pB]; }
+    if (fv && !tv) return [pA, { x: pA.x, y: pB.y }, pB];
+    return [pA, { x: pB.x, y: pA.y }, pB];
+  }
+  function roundedPath(pts, r) {
+    if (pts.length < 3) return `M ${pts[0].x} ${pts[0].y} L ${pts[pts.length - 1].x} ${pts[pts.length - 1].y}`;
+    let d = `M ${pts[0].x} ${pts[0].y}`;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1], p1 = pts[i], p2 = pts[i + 1];
+      const v1 = { x: p1.x - p0.x, y: p1.y - p0.y }, v2 = { x: p2.x - p1.x, y: p2.y - p1.y };
+      const l1 = Math.hypot(v1.x, v1.y) || 1, l2 = Math.hypot(v2.x, v2.y) || 1;
+      const rr = Math.min(r, l1 / 2, l2 / 2);
+      const a = { x: p1.x - v1.x / l1 * rr, y: p1.y - v1.y / l1 * rr };
+      const c = { x: p1.x + v2.x / l2 * rr, y: p1.y + v2.y / l2 * rr };
+      d += ` L ${a.x} ${a.y} Q ${p1.x} ${p1.y} ${c.x} ${c.y}`;
+    }
+    const last = pts[pts.length - 1];
+    return d + ` L ${last.x} ${last.y}`;
+  }
+  function midOfPath(pts) {
+    if (pts.length >= 4) return { x: (pts[1].x + pts[2].x) / 2, y: (pts[1].y + pts[2].y) / 2 };
+    return pts[1];
+  }
+
+  let markerSeq = 0;
+  function ensureMarker(svg, color) {
+    let defs = svg.querySelector("defs");
+    if (!defs) { defs = document.createElementNS(svg.namespaceURI, "defs"); svg.appendChild(defs); }
+    const id = "ah-" + (markerSeq++);
+    const m = document.createElementNS(svg.namespaceURI, "marker");
+    m.setAttribute("id", id);
+    m.setAttribute("viewBox", "0 0 10 10");
+    m.setAttribute("refX", "8.5"); m.setAttribute("refY", "5");
+    m.setAttribute("markerWidth", "7"); m.setAttribute("markerHeight", "7");
+    m.setAttribute("orient", "auto-start-reverse");
+    const p = document.createElementNS(svg.namespaceURI, "path");
+    p.setAttribute("d", "M0.5,0.5 L9.5,5 L0.5,9.5 L3,5 Z");
+    p.setAttribute("fill", color);
+    m.appendChild(p); defs.appendChild(m);
+    return id;
+  }
+
+  function drawEdge(host, svg, fromId, toId, opt) {
+    opt = opt || {};
+    const fromEl = document.getElementById(fromId);
+    const toEl = document.getElementById(toId);
+    if (!fromEl || !toEl) {
+      console.warn("wire: missing node", !fromEl ? fromId : toId);
+      return;
+    }
+    const color = resolveColor(opt.color, host);
+    const ns = svg.namespaceURI;
+    const path = document.createElementNS(ns, "path");
+
+    let d, mid;
+    if (fromId === toId) {
+      // self-loop — choose which side it bows off (default right)
+      const r = localRect(fromEl, host), s = 30, side = opt.side || "r";
+      let p1, p2, c1, c2;
+      if (side === "l") {
+        p1 = { x: r.left, y: r.cy - 8 }; p2 = { x: r.left, y: r.cy + 8 };
+        c1 = { x: r.left - s, y: r.cy - s }; c2 = { x: r.left - s, y: r.cy + s };
+        mid = { x: r.left - s * 0.8, y: r.cy };
+      } else if (side === "t") {
+        p1 = { x: r.cx - 8, y: r.top }; p2 = { x: r.cx + 8, y: r.top };
+        c1 = { x: r.cx - s, y: r.top - s }; c2 = { x: r.cx + s, y: r.top - s };
+        mid = { x: r.cx, y: r.top - s * 0.8 };
+      } else if (side === "b") {
+        p1 = { x: r.cx - 8, y: r.bottom }; p2 = { x: r.cx + 8, y: r.bottom };
+        c1 = { x: r.cx - s, y: r.bottom + s }; c2 = { x: r.cx + s, y: r.bottom + s };
+        mid = { x: r.cx, y: r.bottom + s * 0.8 };
+      } else {
+        p1 = { x: r.right, y: r.cy - 8 }; p2 = { x: r.right, y: r.cy + 8 };
+        c1 = { x: r.right + s, y: r.cy - s }; c2 = { x: r.right + s, y: r.cy + s };
+        mid = { x: r.right + s * 0.8, y: r.cy };
+      }
+      d = `M ${p1.x} ${p1.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p2.x} ${p2.y}`;
+    } else {
+      const a = localRect(fromEl, host), b = localRect(toEl, host);
+      const [fs, ts] = chooseSides(a, b, opt);
+      const pA = anchor(a, fs), pB = anchor(b, ts);
+      if (opt.shape === "elbow") {
+        const pts = elbowPoints(pA, fs, pB, ts);
+        d = roundedPath(pts, 12);
+        mid = midOfPath(pts);
+      } else {
+        const dist = Math.hypot(pB.x - pA.x, pB.y - pA.y);
+        const bend = (opt.curve == null ? 0.5 : opt.curve);
+        const off = Math.min(dist * 0.45, 90) * bend;
+        const c1 = { x: pA.x + pA.nx * off, y: pA.y + pA.ny * off };
+        const c2 = { x: pB.x + pB.nx * off, y: pB.y + pB.ny * off };
+        d = `M ${pA.x} ${pA.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${pB.x} ${pB.y}`;
+        mid = bezierPoint(pA, c1, c2, pB, 0.5);
+      }
+    }
+
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", color);
+    path.setAttribute("stroke-width", opt.width || getCssVar("--edge-w", host) || 2);
+    path.setAttribute("stroke-linecap", "round");
+    if (opt.dashed) path.setAttribute("stroke-dasharray", "6 5");
+    path.setAttribute("marker-end", "url(#" + ensureMarker(svg, color) + ")");
+    svg.appendChild(path);
+
+    if (opt.label) {
+      const chip = document.createElement("div");
+      chip.className = "edge-label";
+      chip.textContent = opt.label;
+      chip.style.left = mid.x + "px";
+      chip.style.top = mid.y + "px";
+      host.appendChild(chip);
+    }
+  }
+
+  function setup(host) {
+    let svg = host.querySelector("svg.wires");
+    if (!svg) {
+      svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("class", "wires");
+      host.insertBefore(svg, host.firstChild);
+    }
+    svg.setAttribute("width", host.scrollWidth);
+    svg.setAttribute("height", host.scrollHeight);
+    svg.setAttribute("viewBox", `0 0 ${host.scrollWidth} ${host.scrollHeight}`);
+    return svg;
+  }
+
+  // public API -------------------------------------------------
+  window.wire = function (fromId, toId, opt) {
+    pending.push([fromId, toId, opt]);
+    if (document.readyState === "complete") flush();
+  };
+  window.wireAll = function (edges) {
+    edges.forEach((e) => pending.push(e));
+    if (document.readyState === "complete") flush();
+  };
+
+  function flush() {
+    const host = document.querySelector(".diagram");
+    if (!host) return;
+    const svg = setup(host);
+    // clear an attached edge-label chip + style once
+    if (!document.getElementById("wire-style")) {
+      const st = document.createElement("style");
+      st.id = "wire-style";
+      st.textContent =
+        ".edge-label{position:absolute;z-index:4;transform:translate(-50%,-50%);" +
+        "background:var(--edge-label-bg,#fff);border:1px solid var(--line-1,#e4e7ec);" +
+        "border-radius:6px;padding:2px 8px;font:600 11px/1 var(--font-ui,system-ui);" +
+        "color:var(--ink-2,#344054);box-shadow:0 1px 2px rgba(16,24,40,.08);white-space:nowrap;}";
+      document.head.appendChild(st);
+    }
+    let e;
+    while ((e = pending.shift())) drawEdge(host, svg, e[0], e[1], e[2]);
+    expand(host, svg);
+  }
+
+  // grow the canvas so connectors/labels that bow past the content
+  // box are never clipped by the screenshot (right + bottom only).
+  function expand(host, svg) {
+    let maxR = 0, maxB = 0;
+    try { const bb = svg.getBBox(); maxR = bb.x + bb.width; maxB = bb.y + bb.height; } catch (_) {}
+    const h = host.getBoundingClientRect();
+    host.querySelectorAll(".edge-label").forEach((el) => {
+      const r = el.getBoundingClientRect();
+      maxR = Math.max(maxR, r.right - h.left);
+      maxB = Math.max(maxB, r.bottom - h.top);
+    });
+    const cs = getComputedStyle(host);
+    const needR = Math.max(0, maxR - host.scrollWidth + 16);
+    const needB = Math.max(0, maxB - host.scrollHeight + 16);
+    if (needR) host.style.paddingRight = (parseFloat(cs.paddingRight) + needR) + "px";
+    if (needB) host.style.paddingBottom = (parseFloat(cs.paddingBottom) + needB) + "px";
+    if (needR || needB) {
+      svg.setAttribute("width", host.scrollWidth);
+      svg.setAttribute("height", host.scrollHeight);
+      svg.setAttribute("viewBox", `0 0 ${host.scrollWidth} ${host.scrollHeight}`);
+    }
+  }
+
+  window.addEventListener("load", flush);
+})();
+
+</script>
+  <script>
+    wireAll([
+      ["ev-tests", "ev-mechanisms", { color: "brand", label: "exercises" }],
+      ["ev-mechanisms", "ev-records", { color: "skill", label: "records" }],
+      ["ev-records", "ev-delivery", { color: "gap", dashed: true, label: "not demonstrated" }],
+      ["ev-delivery", "ev-use", { color: "gap", dashed: true }],
+      ["ev-use", "ev-outcome", { color: "gap", dashed: true }],
+    ]);
+  </script>
+</body>
+</html>

@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Manage cortex cognition phase expectations and active lifecycle state."""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cognition_phase as phase_runtime
+
+
+def _context(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--lane-id")
+    parser.add_argument("--owner-id")
+    parser.add_argument("--receipt-id")
+
+
+def _lifecycle(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--phase", required=True)
+    parser.add_argument("--skill", required=True)
+    parser.add_argument("--trigger", required=True)
+    parser.add_argument("--origin", default="runtime")
+    parser.add_argument("--requirement", default="required")
+    parser.add_argument("--enforcement", default="unknown")
+    parser.add_argument("--effect", default="none")
+
+
+def _emit(value: dict, markdown: bool) -> None:
+    if markdown:
+        sys.stdout.write(phase_runtime.markdown(value))
+    else:
+        print(json.dumps(value, sort_keys=True, separators=(",", ":")))
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="cognition-phase")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    expect = commands.add_parser("expect")
+    _context(expect)
+    _lifecycle(expect)
+    expect.add_argument("--if-absent", action="store_true")
+
+    start = commands.add_parser("start")
+    _context(start)
+    _lifecycle(start)
+    start.add_argument("--expectation-id")
+    start.add_argument("--parent-phase-instance-id")
+
+    complete = commands.add_parser("complete")
+    _context(complete)
+    complete.add_argument("--phase-instance-id")
+    complete.add_argument("--status", choices=("ok", "failed"), required=True)
+    complete.add_argument("--effect")
+
+    skip = commands.add_parser("skip")
+    _context(skip)
+    skip.add_argument("--expectation-id", required=True)
+    skip.add_argument("--reason-code", required=True)
+
+    finalize = commands.add_parser("finalize")
+    _context(finalize)
+    finalize.add_argument("--session-ended", action="store_true")
+    finalize.add_argument("--markdown", action="store_true")
+
+    status = commands.add_parser("status")
+    _context(status)
+    status.add_argument("--markdown", action="store_true")
+
+    reconcile = commands.add_parser("reconcile")
+    _context(reconcile)
+    reconcile.add_argument("--session-ended", action="store_true")
+    reconcile.add_argument("--markdown", action="store_true")
+
+    args = parser.parse_args(argv)
+    root = phase_runtime.default_root()
+    try:
+        lane_id, owner_id, receipt_id = phase_runtime.resolve_context(
+            root,
+            args.lane_id,
+            args.owner_id,
+            args.receipt_id,
+            allow_stale=args.command in {
+                "status", "reconcile", "finalize",
+            },
+        )
+        if args.command == "expect":
+            result = phase_runtime.expect(
+                root=root,
+                lane_id=lane_id,
+                owner_id=owner_id,
+                receipt_id=receipt_id,
+                phase=args.phase,
+                skill=args.skill,
+                trigger=args.trigger,
+                origin=args.origin,
+                requirement=args.requirement,
+                enforcement=args.enforcement,
+                effect=args.effect,
+                if_absent=args.if_absent,
+            )
+        elif args.command == "start":
+            result = phase_runtime.start(
+                root=root,
+                lane_id=lane_id,
+                owner_id=owner_id,
+                receipt_id=receipt_id,
+                phase=args.phase,
+                skill=args.skill,
+                trigger=args.trigger,
+                origin=args.origin,
+                requirement=args.requirement,
+                enforcement=args.enforcement,
+                effect=args.effect,
+                expectation_id=args.expectation_id,
+                parent_phase_instance_id=args.parent_phase_instance_id,
+            )
+        elif args.command == "complete":
+            result = phase_runtime.complete(
+                root=root,
+                lane_id=lane_id,
+                owner_id=owner_id,
+                receipt_id=receipt_id,
+                phase_instance_id=args.phase_instance_id,
+                status=args.status,
+                effect=args.effect,
+            )
+        elif args.command == "skip":
+            result = phase_runtime.skip(
+                root=root,
+                lane_id=lane_id,
+                owner_id=owner_id,
+                receipt_id=receipt_id,
+                expectation_id=args.expectation_id,
+                reason_code=args.reason_code,
+            )
+        elif args.command == "finalize":
+            result = phase_runtime.finalize(
+                root=root,
+                lane_id=lane_id,
+                owner_id=owner_id,
+                receipt_id=receipt_id,
+                session_ended=args.session_ended,
+            )
+        elif args.command == "status":
+            result = phase_runtime.status(
+                root=root,
+                lane_id=lane_id,
+                owner_id=owner_id,
+                receipt_id=receipt_id,
+            )
+        else:
+            result = phase_runtime.reconcile(
+                root=root,
+                lane_id=lane_id,
+                owner_id=owner_id,
+                receipt_id=receipt_id,
+                session_ended=args.session_ended,
+            )
+    except phase_runtime.PhaseInputError as exc:
+        print(
+            f"cognition-phase: invalid input (reason: {exc.code})",
+            file=sys.stderr,
+        )
+        return 2
+    except phase_runtime.PhaseAdvisoryError as exc:
+        result = phase_runtime.advisory_result(args.command, exc.code)
+        print(
+            f"cognition-phase: advisory unavailable (reason: {exc.code})",
+            file=sys.stderr,
+        )
+
+    _emit(result, getattr(args, "markdown", False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

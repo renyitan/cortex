@@ -1,0 +1,593 @@
+#!/usr/bin/env python3
+"""test-recall-index — deterministic regression test for the rung-2 retrieval
+index (plugins/cortex/tools/recall-index). cortex dev machinery, not shipped.
+
+Builds an index over a tiny crafted fixture corpus and asserts the parts where
+bugs live: record parsing (the markdown `source:` field must NOT clobber the
+structural file-origin), BM25 ranking order, column weighting, grep degradation
+when the db/FTS5 is absent, stable refs, semantic scope, exact fetch, bounded
+graph expansion, public JSON contracts, rebuild staleness, and eval metrics.
+
+Usage: tests/test-recall-index       (exit 0 = all pass, 1 = a case failed)
+"""
+import contextlib, io, os, sqlite3, subprocess, sys, tempfile, json
+import re
+from pathlib import Path
+from importlib.machinery import SourceFileLoader
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOL = ROOT / "plugins/cortex/tools/recall-index"
+MOUNT = ROOT / "plugins/cortex/bin/cortex-mount"
+PLUGIN = ROOT / "plugins/cortex"
+os.environ["CORTEX_EMBED_DISABLE"] = "1"
+ri = SourceFileLoader("recall_index", str(TOOL)).load_module()
+
+LEARNINGS = """# Learnings
+
+### intake-buffer-drains-at-sleep  ·  type:pattern  ·  conf:8/10
+insight:  The intake buffer is drained during the SLEEP consolidate pass, never deleted.
+trigger:  draining notes
+tags:     intake, drain, sleep, consolidate
+evidence: test fixture
+source:   observed      scope: global
+updated:  2026-06-26
+see-also: macos-lacks-gnu-coreutils
+
+### macos-lacks-gnu-coreutils  ·  type:tool  ·  conf:7/10
+insight:  macOS ships BSD coreutils, not GNU, so date flags differ.
+trigger:  writing shell scripts
+tags:     macos, bsd, coreutils, portability
+evidence: test fixture
+source:   observed      scope: cortex-substrate
+updated:  2026-06-26
+derives-from: intake-buffer-drains-at-sleep
+see-also: commit-on-discretion
+
+### commit-on-discretion  ·  type:preference  ·  conf:9/10
+insight:  Commit and push finished work without asking permission first.
+trigger:  work complete
+tags:     git, autonomy, commit, permission
+evidence: test fixture
+source:   operator      scope: global
+updated:  2026-06-26
+see-also: missing-soft-association
+"""
+
+DECISIONS = """# Decisions
+
+### index-is-a-removable-sidecar  ·  type:decision  ·  supersedes:—
+insight:  The retrieval index is a rebuildable removable sidecar over canonical markdown.
+trigger:  building the index
+tags:     index, sidecar, fts5, sqlite, rebuildable
+evidence: test fixture
+source:   observed      scope: global
+updated:  2026-06-26
+"""
+
+def setup(tmp):
+    md = Path(tmp)
+    (md / "learnings.md").write_text(LEARNINGS)
+    (md / "decisions.md").write_text(DECISIONS)
+    os.environ["CORTEX_MEMORY_DIR"] = str(md)
+    return md
+
+passed = failed = 0
+def check(name, cond):
+    global passed, failed
+    if cond:
+        passed += 1; print(f"  PASS  {name}")
+    else:
+        failed += 1; print(f"  FAIL  {name}")
+
+with tempfile.TemporaryDirectory() as tmp:
+    md = setup(tmp)
+
+    # 1. parsing: structural source kept, not clobbered by markdown `source:` field
+    recs = ri.all_records()
+    check("parses all 4 records", len(recs) == 4)
+    check("structural source = file origin (not clobbered)",
+          {r["source"] for r in recs} == {"learnings", "decisions"})
+    check("(source,seq) pairs unique",
+          len({(r["source"], r["seq"]) for r in recs}) == 4)
+    bykey = {r["key"]: r for r in recs}
+    check("insight parsed clean",
+          bykey["macos-lacks-gnu-coreutils"]["insight"].startswith("macOS ships BSD"))
+    check("tags parsed", "coreutils" in bykey["macos-lacks-gnu-coreutils"]["tags"])
+    check("semantic scope parsed from source line",
+          bykey["macos-lacks-gnu-coreutils"]["scope"] == "cortex-substrate")
+    check("stable ref is store path plus key",
+          bykey["commit-on-discretion"]["ref"] ==
+          "memory/learnings.md::commit-on-discretion")
+    check("derivation links parsed",
+          bykey["macos-lacks-gnu-coreutils"]["derives-from"] ==
+          ["intake-buffer-drains-at-sleep"])
+
+    # 2. rebuild + FTS5 ranked search
+    if ri.fts5_available():
+        ri.ensure_index(force=True)
+        check("index db created", ri.db_path().exists())
+        res = ri.search("intake drain sleep", limit=5)
+        check("fts5 ranks the right record first",
+              res and res[0]["key"] == "intake-buffer-drains-at-sleep")
+        # column weight: a query hitting the KEY should rank that record top
+        res2 = ri.search("coreutils", limit=5)
+        check("tag/key match retrieves record", res2 and res2[0]["key"] == "macos-lacks-gnu-coreutils")
+        # source filter
+        res3 = ri.search("index sidecar", limit=5, source="decisions")
+        check("source filter restricts results",
+              all(r["source"] == "decisions" for r in res3) and res3)
+        res_scope = ri.search(
+            "coreutils", limit=5, scope="track:cortex-substrate")
+        check("track selector maps to stored scope",
+              res_scope and res_scope[0]["key"] == "macos-lacks-gnu-coreutils")
+        check("global selector excludes track record",
+              ri.search("coreutils", limit=5, scope="global") == [])
+    else:
+        print("  SKIP  fts5 not available — skipping ranked-search cases")
+
+    # 3. grep degradation when db absent
+    if ri.db_path().exists():
+        ri.db_path().unlink()
+    res4 = ri.search("intake drain", limit=3)
+    check("grep fallback returns results when db absent",
+          res4 and res4[0]["key"] == "intake-buffer-drains-at-sleep")
+    _, degraded = ri.search_with_meta("intake drain", limit=3)
+    check("missing sidecar reports degradation reason",
+          degraded == {"engine": "grep", "degraded": True,
+                       "reason_code": "sidecar_missing"})
+
+    # 4. rebuild staleness: fresh build, then no-change = up to date
+    if ri.fts5_available():
+        ri.ensure_index(force=True)
+        rebuilt_again = ri.ensure_index(force=False)
+        check("unchanged sources => no rebuild", rebuilt_again is False)
+        # touch a source => rebuild
+        (md / "learnings.md").write_text(LEARNINGS + "\n")
+        os.utime(md / "learnings.md", None)
+        rebuilt = ri.ensure_index(force=False)
+        check("changed source => rebuild", rebuilt is True)
+        before_failed_rebuild = ri.db_path().read_bytes()
+        original_embed_store = ri._embed_and_store
+        try:
+            ri._embed_and_store = lambda *args, **kwargs: (
+                (_ for _ in ()).throw(
+                    sqlite3.OperationalError("injected rebuild failure")
+                )
+            )
+            try:
+                ri.ensure_index(force=True)
+                rebuild_failed = False
+            except sqlite3.OperationalError:
+                rebuild_failed = True
+        finally:
+            ri._embed_and_store = original_embed_store
+        check("failed rebuild preserves the previous sidecar",
+              rebuild_failed and
+              ri.db_path().read_bytes() == before_failed_rebuild and
+              not list(md.glob(".cortex-index.db.*.tmp")))
+
+        decisions = md / "decisions.md"
+        decisions_text = decisions.read_text()
+        decisions.unlink()
+        ri.ensure_index()
+        with sqlite3.connect(ri.db_path()) as connection:
+            count_without_decisions = connection.execute(
+                "SELECT count(*) FROM records"
+            ).fetchone()[0]
+        decisions.write_text(decisions_text)
+        ri.ensure_index()
+        check("deleted canonical store is removed from the sidecar",
+              count_without_decisions == 3)
+
+    # 5. bloat report
+    b = ri.bloat_report()
+    check("bloat report counts records", b["total"] == 4)
+    check("fixture insights are atomic (none >30w)", b["over30"] == 0)
+
+    # 6. exact fetch and graph expansion
+    source_ref = "memory/learnings.md::intake-buffer-drains-at-sleep"
+    fetched = ri.fetch_record(source_ref)
+    check("fetch resolves stable ref", fetched and fetched["ref"] == source_ref)
+    check("fetch returns exact canonical record text",
+          fetched and fetched["raw"] == bykey["intake-buffer-drains-at-sleep"]["raw"])
+    one_hop = ri.expand_records([source_ref], hops=1)
+    check("one-hop expansion includes direct neighbor only",
+          {r["key"] for r in one_hop["records"]} ==
+          {"intake-buffer-drains-at-sleep", "macos-lacks-gnu-coreutils"})
+    two_hop = ri.expand_records([source_ref], hops=2)
+    check("two-hop expansion reaches neighbor's neighbor",
+          "commit-on-discretion" in {r["key"] for r in two_hop["records"]})
+    reverse = ri.expand_records(
+        ["memory/learnings.md::macos-lacks-gnu-coreutils"], hops=1)
+    check("derives-from traverses in both directions",
+          "intake-buffer-drains-at-sleep" in
+          {r["key"] for r in reverse["records"]})
+    partial = ri.expand_records(
+        ["memory/learnings.md::macos-lacks-gnu-coreutils"], hops=2)
+    check("dangling soft edge is reported as partial evidence",
+          partial["status"] == "partial" and
+          partial["unresolved_edges"][0]["hard"] is False)
+    missing = ri.expand_records(["memory/learnings.md::absent"], hops=1)
+    check("missing start ref is explicit",
+          missing["status"] == "not_found" and missing["missing_start_refs"])
+    try:
+        ri.fetch_record("../memory/learnings.md::bad")
+        valid_ref_rejected = False
+    except ValueError:
+        valid_ref_rejected = True
+    check("invalid ref shape is rejected", valid_ref_rejected)
+
+    # 7. caught SQLite failures degrade explicitly
+    original_ensure = ri.ensure_index
+    try:
+        ri.ensure_index = lambda *args, **kwargs: (
+            (_ for _ in ()).throw(sqlite3.OperationalError("fixture failure"))
+        )
+        _, sqlite_meta = ri.search_with_meta("intake", limit=3)
+    finally:
+        ri.ensure_index = original_ensure
+    check("SQLite failure reports bounded reason code",
+          sqlite_meta["reason_code"] == "sqlite_unavailable" and
+          sqlite_meta["degraded"] is True)
+
+    # 8. search never permits model download; rebuild may
+    if ri.fts5_available():
+        calls = []
+        original_embed = ri.embed_backend
+        try:
+            ri.embed_backend = lambda allow_download=False: (
+                calls.append(allow_download) or None
+            )
+            ri.ensure_index(force=True, allow_download=False)
+            ri.search("intake", limit=3)
+            search_calls = list(calls)
+            calls.clear()
+            ri.ensure_index(force=True, allow_download=True)
+            rebuild_calls = list(calls)
+        finally:
+            ri.embed_backend = original_embed
+        check("search path forbids model download",
+              search_calls and all(call is False for call in search_calls))
+        check("explicit rebuild may populate model cache",
+              rebuild_calls and rebuild_calls[0] is True)
+
+    # 9. public CLI JSON contracts
+    event_file = md / "events.jsonl"
+    env = dict(
+        os.environ,
+        CORTEX_MEMORY_DIR=str(md),
+        CORTEX_EMBED_DISABLE="1",
+        CORTEX_EVENT_REPO_ROOT=str(md),
+        CORTEX_EVENTS_FILE="events.jsonl",
+    )
+    ri.ensure_index(force=True)
+    search_proc = subprocess.run(
+        [sys.executable, str(TOOL), "search", "coreutils", "--scope",
+         "track:cortex-substrate", "--json"],
+        env=env, text=True, capture_output=True, check=False)
+    search_json = json.loads(search_proc.stdout)
+    check("search CLI emits stable JSON contract",
+          search_proc.returncode == 0 and
+          search_json["schema"] == "cortex.retrieval-search/v1" and
+          search_json["results"][0]["ref"].endswith("macos-lacks-gnu-coreutils"))
+    fetch_proc = subprocess.run(
+        [sys.executable, str(TOOL), "fetch", source_ref, "--json"],
+        env=env, text=True, capture_output=True, check=False)
+    fetch_json = json.loads(fetch_proc.stdout)
+    check("fetch CLI emits exact record JSON",
+          fetch_proc.returncode == 0 and
+          fetch_json["record"]["raw"] == fetched["raw"])
+    expand_proc = subprocess.run(
+        [sys.executable, str(TOOL), "expand", source_ref, "--hops", "2", "--json"],
+        env=env, text=True, capture_output=True, check=False)
+    expand_json = json.loads(expand_proc.stdout)
+    check("expand CLI emits bounded graph JSON",
+          expand_proc.returncode == 0 and
+          expand_json["schema"] == "cortex.retrieval-expand/v1" and
+          max(r["distance"] for r in expand_json["records"]) <= 2)
+    query_proc = subprocess.run(
+        [sys.executable, str(TOOL), "query", "intake", "--source", "learnings"],
+        env=env, text=True, capture_output=True, check=False)
+    check("legacy query text interface remains available",
+          query_proc.returncode == 0 and
+          "[learnings] intake-buffer-drains-at-sleep" in query_proc.stdout)
+    events = [json.loads(line) for line in event_file.read_text().splitlines()]
+    check("retrieval commands emit content-minimal events",
+          {event["event_type"] for event in events} >= {
+              "retrieval.search",
+              "retrieval.fetch",
+              "retrieval.expand",
+          })
+    check("retrieval events hash but do not store query text",
+          all("query" not in event and "query_text" not in event
+              for event in events) and
+          any("query_sha256" in event.get("attributes", {}).get("hashes", {})
+              for event in events))
+
+    learnings_path = md / "learnings.md"
+    hidden_learnings = md / "learnings.hidden"
+    learnings_path.rename(hidden_learnings)
+    learnings_path.mkdir()
+    try:
+        unreadable_proc = subprocess.run(
+            [sys.executable, str(TOOL), "ensure", "--json"],
+            env=env, text=True, capture_output=True, check=False)
+    finally:
+        learnings_path.rmdir()
+        hidden_learnings.rename(learnings_path)
+    latest_event = json.loads(event_file.read_text().splitlines()[-1])
+    check("source-read failure still emits retrieval ensure",
+          unreadable_proc.returncode == 0 and
+          latest_event["event_type"] == "retrieval.ensure" and
+          latest_event["status"] == "degraded" and
+          latest_event["attributes"]["counts"]["indexed"] == 0)
+
+    original_learnings = (md / "learnings.md").read_text()
+    duplicate_record = LEARNINGS.split(
+        "### macos-lacks-gnu-coreutils", 1
+    )[0].split("### intake-buffer-drains-at-sleep", 1)[1]
+    (md / "learnings.md").write_text(
+        original_learnings
+        + "\n### intake-buffer-drains-at-sleep"
+        + duplicate_record
+    )
+    try:
+        ri.fetch_record(
+            "memory/learnings.md::intake-buffer-drains-at-sleep"
+        )
+        duplicate_rejected = False
+    except ValueError:
+        duplicate_rejected = True
+    check("duplicate stable refs are rejected", duplicate_rejected)
+    (md / "learnings.md").write_text(original_learnings)
+
+    # 11. eval harness metrics
+    golden = {"queries": [
+        {"query": "intake drain sleep", "category": "lexical",
+         "expected": ["intake-buffer-drains-at-sleep"]},
+        {"query": "removable sidecar index", "category": "lexical",
+         "expected": ["index-is-a-removable-sidecar"]}]}
+    gp = md / "golden.json"
+    gp.write_text(json.dumps(golden))
+    if ri.fts5_available():
+        rep = ri.run_eval(gp)
+        check("eval overall P@5 perfect on exact-match fixture",
+              rep["overall"]["p5"] == 1.0)
+
+with tempfile.TemporaryDirectory() as tmp:
+    consumer = Path(tmp)
+    (consumer / "agents").mkdir()
+    (consumer / "memory").mkdir()
+    (consumer / "agents/faber.md").write_text("# Test persona\n")
+    (consumer / "memory/learnings.md").write_text(LEARNINGS)
+    (consumer / "memory/decisions.md").write_text(DECISIONS)
+    mount_env = dict(
+        os.environ,
+        COPILOT_PROJECT_DIR=str(consumer),
+        COPILOT_PLUGIN_ROOT=str(PLUGIN),
+        CORTEX_EMBED_DISABLE="1",
+        CORTEX_PHASE_TIME="2026-08-09T12:00:00Z",
+        CORTEX_EVENT_TIME="2026-08-09T12:00:00Z",
+        CORTEX_PHASE_LEASE_SECONDS="1",
+    )
+    session_start = json.dumps({
+        "hook_event_name": "SessionStart",
+        "session_id": "session-mount-fixture",
+        "timestamp": "2026-08-09T12:00:00Z",
+        "cwd": str(consumer),
+        "source": "startup",
+    })
+    first_mount = subprocess.run(
+        [str(MOUNT)],
+        env=mount_env,
+        input=session_start,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    cold_db = consumer / "memory/cortex-index.db"
+    if cold_db.exists():
+        with sqlite3.connect(cold_db) as connection:
+            first_count = connection.execute(
+            "SELECT count(*) FROM records"
+            ).fetchone()[0]
+    else:
+        first_count = 0
+    first_mtime = cold_db.stat().st_mtime_ns if cold_db.exists() else 0
+    first_ctime = cold_db.stat().st_ctime_ns if cold_db.exists() else 0
+    check("first SessionStart builds a local BM25 sidecar",
+          first_mount.returncode == 0 and first_count == 4)
+    hook_output = json.loads(first_mount.stdout)
+    receipt_match = re.search(
+        r"CORTEX_PHASE_RECEIPT_ID=([0-9a-f]{32})",
+        hook_output["additionalContext"],
+    )
+    mount_events = [
+        json.loads(line)
+        for line in (
+            consumer / ".cortex/cognition-events.jsonl"
+        ).read_text().splitlines()
+    ]
+    check("SessionStart injects one opaque phase receipt",
+          set(hook_output) == {"additionalContext"} and
+          receipt_match is not None and
+          "session-mount-fixture" not in first_mount.stdout)
+    check("WAKE expectation precedes retrieval readiness",
+          [event["event_type"] for event in mount_events[:2]] ==
+          ["phase.expected", "retrieval.ensure"])
+    second_start = subprocess.run(
+        [str(MOUNT)],
+        env=mount_env,
+        input=session_start,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    repeated_events = [
+        json.loads(line)
+        for line in (
+            consumer / ".cortex/cognition-events.jsonl"
+        ).read_text().splitlines()
+    ]
+    check("repeated SessionStart reuses the pending WAKE expectation",
+          second_start.returncode == 0 and
+          len([
+              event for event in repeated_events
+              if event["event_type"] == "phase.expected"
+          ]) == 1)
+    resumed_env = dict(
+        mount_env,
+        CORTEX_PHASE_TIME="2026-08-09T12:00:02Z",
+        CORTEX_EVENT_TIME="2026-08-09T12:00:02Z",
+    )
+    resumed_start = subprocess.run(
+        [str(MOUNT)],
+        env=resumed_env,
+        input=session_start.replace('"startup"', '"resume"'),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    resumed_events = [
+        json.loads(line)
+        for line in (
+            consumer / ".cortex/cognition-events.jsonl"
+        ).read_text().splitlines()
+    ]
+    check("resumed SessionStart replaces an expired WAKE expectation",
+          resumed_start.returncode == 0 and resumed_start.stdout and
+          len([
+              event for event in resumed_events
+              if event["event_type"] == "phase.expected"
+          ]) == 2 and
+          len([
+              event for event in resumed_events
+              if event["event_type"] == "phase.missed"
+          ]) == 1)
+    check("cold-start sidecar is private",
+          cold_db.exists() and
+          (cold_db.stat().st_mode & 0o077) == 0)
+    ignored = set((consumer / ".gitignore").read_text().splitlines())
+    check("SessionStart gitignores every sidecar artifact",
+          {
+              "memory/cortex-index.db",
+              "memory/cortex-index.db-*",
+              "memory/.cortex-index.db.lock",
+              "memory/.cortex-index.db.*.tmp",
+          } <= ignored)
+
+    second_mount = subprocess.run(
+        [str(MOUNT)],
+        env=mount_env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    check("current sidecar is not rebuilt at later WAKE",
+          second_mount.returncode == 0 and
+          cold_db.stat().st_mtime_ns == first_mtime and
+          cold_db.stat().st_ctime_ns == first_ctime)
+
+    (consumer / "memory/learnings.md").write_text(
+        LEARNINGS
+        + "\n### wake-refresh-fixture  ·  type:operational  ·  conf:7/10\n"
+          "insight:  WAKE refreshes a stale local retrieval sidecar.\n"
+          "trigger:  starting a session after canonical memory changed\n"
+          "tags:     wake, sidecar, refresh\n"
+          "evidence: test fixture\n"
+          "source:   observed      scope: global\n"
+          "updated:  2026-08-07\n"
+    )
+    third_mount = subprocess.run(
+        [str(MOUNT)],
+        env=mount_env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    with sqlite3.connect(cold_db) as connection:
+        refreshed_count = connection.execute(
+            "SELECT count(*) FROM records"
+        ).fetchone()[0]
+    events = [
+        json.loads(line)
+        for line in (
+            consumer / ".cortex/cognition-events.jsonl"
+        ).read_text().splitlines()
+    ]
+    ensure_events = [
+        event for event in events
+        if event["event_type"] == "retrieval.ensure"
+    ]
+    check("later WAKE refreshes a stale sidecar",
+          third_mount.returncode == 0 and refreshed_count == 5)
+    check("every WAKE ensure is observable",
+          len(ensure_events) == 5 and
+          [event["attributes"]["changed"] for event in ensure_events]
+          == [True, False, False, False, True])
+    check("WAKE ensure never builds dense vectors when disabled",
+          all(event["attributes"]["counts"]["vectors"] == 0
+              for event in ensure_events))
+
+    cold_db.unlink()
+    ensure_env = dict(
+        mount_env,
+        CORTEX_MEMORY_DIR=str(consumer / "memory"),
+        CORTEX_EVENT_REPO_ROOT=str(consumer),
+    )
+    concurrent_ensures = [
+        subprocess.Popen(
+            [str(TOOL), "ensure", "--json"],
+            env=ensure_env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for _ in range(4)
+    ]
+    concurrent_results = [
+        process.communicate() for process in concurrent_ensures
+    ]
+    with sqlite3.connect(cold_db) as connection:
+        concurrent_count = connection.execute(
+            "SELECT count(*) FROM records"
+        ).fetchone()[0]
+    concurrent_events = [
+        event
+        for line in (
+            consumer / ".cortex/cognition-events.jsonl"
+        ).read_text().splitlines()
+        for event in [json.loads(line)]
+        if event["event_type"] == "retrieval.ensure"
+    ][-4:]
+    concurrent_ok = (
+        all(process.returncode == 0 for process in concurrent_ensures) and
+        concurrent_count == 5 and
+        sum(event["attributes"]["changed"]
+            for event in concurrent_events) == 1
+    )
+    if not concurrent_ok:
+        print("  concurrent diagnostics:",
+              [process.returncode for process in concurrent_ensures],
+              concurrent_count,
+              [event["attributes"]["changed"]
+               for event in concurrent_events],
+              [result[1] for result in concurrent_results])
+    check("concurrent first WAKEs serialize one valid rebuild", concurrent_ok)
+
+    concurrent_mounts = [
+        subprocess.Popen(
+            [str(MOUNT)],
+            env=mount_env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for _ in range(4)
+    ]
+    mount_results = [process.communicate() for process in concurrent_mounts]
+    check("concurrent SessionStart tool mounts are idempotent",
+          all(process.returncode == 0 for process in concurrent_mounts))
+
+print(f"\n{passed} passed, {failed} failed")
+sys.exit(1 if failed else 0)

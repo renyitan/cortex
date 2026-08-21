@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Check repository consistency
+        run: scripts/cortex-lint
+
+      - name: Run deterministic tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test in tests/test-*; do
+            "$test"
+          done
+
+      - name: Check shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -n install.sh try-cortex.sh
+          bash -n \
+            plugins/cortex/bin/cortex-bind \
+            plugins/cortex/bin/cortex-capture-check \
+            plugins/cortex/bin/cortex-mount \
+            plugins/cortex/tools/intake \
+            plugins/cortex/tools/refs \
+            scripts/cortex-lint \
+            scripts/hooks/pre-commit \
+            tests/test-*
+
+      - name: Compile Python tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r file; do
+            python3 -m py_compile "$file"
+          done < <(grep -rl '^#!/usr/bin/env python3' plugins/cortex/tools)
+          python3 -m py_compile plugins/cortex/tools/*.py

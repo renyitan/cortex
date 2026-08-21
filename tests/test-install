@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# test-install — verify the local-checkout setup path without network plugin installation.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+fail() {
+  printf 'test-install: %s\n' "$*" >&2
+  exit 1
+}
+
+help="$("$ROOT/install.sh" --help)"
+grep -q -- '--plugin-dir DIR' <<<"$help" || fail "help omits the local plugin option"
+if grep -q '^set -eu$' <<<"$help"; then
+  fail "help leaked shell source"
+fi
+
+mkdir -p "$TMP/bin" "$TMP/consumer"
+printf 'existing-rule' > "$TMP/consumer/.gitignore"
+cat > "$TMP/bin/copilot" <<'EOF'
+#!/bin/sh
+echo "test-install: copilot must not be invoked during local scaffolding" >&2
+exit 99
+EOF
+chmod +x "$TMP/bin/copilot"
+
+output="$(
+  PATH="$TMP/bin:$PATH" "$ROOT/install.sh" \
+    --plugin-dir "$ROOT/plugins/cortex" \
+    --dir "$TMP/consumer" \
+    --name scribe \
+    --description "A local test agent." \
+    --yes
+)"
+
+for path in \
+  agents/scribe.md \
+  .github/agents/scribe.agent.md \
+  AGENTS.md \
+  memory/learnings.md \
+  memory/decisions.md \
+  workspace/README.md \
+  .cortex-version; do
+  [ -e "$TMP/consumer/$path" ] || fail "missing generated path: $path"
+done
+
+grep -q -- '--plugin-dir' <<<"$output" || fail "launch command omits the reviewed payload"
+if grep -q '^### adopted-cortex' "$TMP/consumer/memory/decisions.md"; then
+  fail "installer wrote an out-of-schema canonical decision"
+fi
+grep -qxF 'existing-rule' "$TMP/consumer/.gitignore" \
+  || fail "mount concatenated ignore rules onto a file without a final newline"
+grep -qxF '.cortex/' "$TMP/consumer/.gitignore" \
+  || fail "private Cortex state is not ignored"
+
+cp "$TMP/consumer/.github/agents/scribe.agent.md" "$TMP/generated.before"
+PATH="$TMP/bin:$PATH" "$ROOT/install.sh" \
+  --plugin-dir "$ROOT/plugins/cortex" \
+  --dir "$TMP/consumer" \
+  --name scribe \
+  --description "A local test agent." \
+  --yes >/dev/null
+cmp -s "$TMP/generated.before" "$TMP/consumer/.github/agents/scribe.agent.md" \
+  || fail "repeat install changed an identical generated entrypoint"
+
+CORTEX_LINT_STATE_ROOT="$TMP/consumer" "$ROOT/scripts/cortex-lint" --quiet >/dev/null \
+  || fail "freshly scaffolded consumer fails cortex-lint"
+
+[ -x "$ROOT/try-cortex.sh" ] || fail "try-cortex.sh is not executable"
+
+cat > "$TMP/bin/copilot" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$@" > "$COPILOT_LOG"
+EOF
+chmod +x "$TMP/bin/copilot"
+
+COPILOT_LOG="$TMP/copilot.log" PATH="$TMP/bin:$PATH" \
+  "$ROOT/try-cortex.sh" "$TMP/quickstart" >/dev/null
+git -C "$TMP/quickstart" rev-parse --is-inside-work-tree >/dev/null \
+  || fail "quick start did not initialize a Git repository"
+[ -f "$TMP/quickstart/agents/scribe.md" ] \
+  || fail "quick start did not create the starter persona"
+[ "$(paste -sd ' ' "$TMP/copilot.log")" = "--plugin-dir $ROOT/plugins/cortex --agent scribe" ] \
+  || fail "quick start launched Copilot with unexpected arguments"
+
+mkdir -p "$TMP/not-a-repo"
+printf 'existing content\n' > "$TMP/not-a-repo/file.txt"
+if COPILOT_LOG="$TMP/copilot.log" PATH="$TMP/bin:$PATH" \
+  "$ROOT/try-cortex.sh" "$TMP/not-a-repo" >/dev/null 2>&1; then
+  fail "quick start accepted a non-empty directory that is not a Git repository"
+fi
+
+printf 'test-install: 17 checks passed\n'

@@ -1,0 +1,924 @@
+#!/usr/bin/env python3
+"""Deterministic tests for the cognition phase lifecycle runtime."""
+from __future__ import annotations
+
+import json
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / "plugins/cortex/tools"
+TOOL = TOOLS / "cognition-phase"
+EVENT_TOOL = TOOLS / "cognition-event"
+sys.path.insert(0, str(TOOLS))
+phase_runtime = SourceFileLoader(
+    "cognition_phase", str(TOOLS / "cognition_phase.py")
+).load_module()
+event_module = SourceFileLoader(
+    "cognition_event_for_phase", str(TOOLS / "cognition_event.py")
+).load_module()
+
+OWNER = "11111111111111111111111111111111"
+OTHER_OWNER = "22222222222222222222222222222222"
+TIME0 = "2026-07-01T12:00:00Z"
+TIME2 = "2026-07-01T12:00:02Z"
+passed = failed = 0
+
+
+def check(name, condition):
+    global passed, failed
+    if condition:
+        passed += 1
+        print(f"  PASS  {name}")
+    else:
+        failed += 1
+        print(f"  FAIL  {name}")
+
+
+def environment(root: Path, **changes) -> dict:
+    values = dict(
+        os.environ,
+        CORTEX_REPO_ROOT=str(root),
+        CORTEX_EVENT_REPO_ROOT=str(root),
+        CORTEX_EVENTS_FILE=".cortex/events.jsonl",
+        CORTEX_PHASE_TIME=TIME0,
+        CORTEX_EVENT_TIME=TIME0,
+        CORTEX_PHASE_LEASE_SECONDS="30",
+    )
+    values.update({key: str(value) for key, value in changes.items()})
+    return values
+
+
+def run(root: Path, *arguments: str, **changes):
+    process = subprocess.run(
+        [str(TOOL), *arguments],
+        env=environment(root, **changes),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    payload = json.loads(process.stdout) if process.stdout.strip() else None
+    return process, payload
+
+
+def expected(root: Path, lane: str, owner: str = OWNER, **options):
+    arguments = [
+        "expect", "--lane-id", lane, "--owner-id", owner,
+        "--phase", options.get("phase", "wake"),
+        "--skill", options.get("skill", "recall"),
+        "--trigger", options.get("trigger", "session_start"),
+        "--origin", options.get("origin", "harness"),
+        "--requirement", options.get("requirement", "required"),
+        "--enforcement", options.get("enforcement", "enforced"),
+        "--effect", options.get("effect", "none"),
+    ]
+    if options.get("if_absent"):
+        arguments.append("--if-absent")
+    return run(root, *arguments, **options.get("env", {}))
+
+
+def started(
+    root: Path,
+    lane: str,
+    owner: str = OWNER,
+    expectation_id: str | None = None,
+    **options,
+):
+    arguments = ["start"]
+    if options.get("receipt_id"):
+        arguments.extend(["--receipt-id", options["receipt_id"]])
+    else:
+        arguments.extend(["--lane-id", lane, "--owner-id", owner])
+    arguments.extend([
+        "--phase", options.get("phase", "wake"),
+        "--skill", options.get("skill", "recall"),
+        "--trigger", options.get("trigger", "session_start"),
+        "--origin", options.get("origin", "runtime"),
+        "--requirement", options.get("requirement", "required"),
+        "--enforcement", options.get("enforcement", "model_owned"),
+        "--effect", options.get("effect", "none"),
+    ])
+    if expectation_id:
+        arguments.extend(["--expectation-id", expectation_id])
+    if options.get("parent"):
+        arguments.extend([
+            "--parent-phase-instance-id", options["parent"]
+        ])
+    return run(root, *arguments, **options.get("env", {}))
+
+
+def events(root: Path) -> list[dict]:
+    path = root / ".cortex/events.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    expect_process, expectation = expected(root, "lane-basic")
+    start_process, phase = started(
+        root,
+        "lane-basic",
+        expectation_id=expectation["expectation_id"],
+        receipt_id=expectation["receipt_id"],
+    )
+    complete_process, completion = run(
+        root,
+        "complete", "--receipt-id", expectation["receipt_id"],
+        "--phase-instance-id", phase["phase_instance_id"],
+        "--status", "ok",
+    )
+    lifecycle = events(root)
+    check("expect start complete succeed",
+          expect_process.returncode == start_process.returncode ==
+          complete_process.returncode == 0 and completion["ok"])
+    check("phase IDs are UUID-like and command runs remain distinct",
+          event_module.UUID_LIKE_RE.fullmatch(
+              expectation["expectation_id"]
+          ) is not None and
+          event_module.UUID_LIKE_RE.fullmatch(
+              phase["phase_instance_id"]
+          ) is not None and
+          expectation["run_id"] != phase["run_id"] != completion["run_id"])
+    check("exact terminal parents invocation command",
+          lifecycle[-1]["event_type"] == "phase.completed" and
+          lifecycle[-1]["parent_run_id"] == phase["phase_start_run_id"])
+    check("start returns explicit runtime context",
+          set(phase["environment"]) == {
+              "CORTEX_PHASE_RECEIPT_ID",
+              "CORTEX_PHASE_INSTANCE_ID", "CORTEX_PHASE_START_RUN_ID",
+              "CORTEX_PHASE_NAME", "CORTEX_PHASE_SKILL",
+          })
+    serialized = json.dumps(lifecycle)
+    check("events hash identity without leaking receipt lane or owner",
+          "lane-basic" not in serialized and OWNER not in serialized and
+          expectation["receipt_id"] not in serialized and
+          lifecycle[0]["attributes"]["lane_id_hash"] and
+          lifecycle[0]["attributes"]["owner_id_hash"])
+    state = root / ".cortex/cognition-phase/state.json"
+    owner_receipt = next(
+        (root / ".cortex/cognition-phase/owners").iterdir()
+    )
+    check("phase state and owner receipt are mode 0600",
+          stat.S_IMODE(state.stat().st_mode) == 0o600 and
+          stat.S_IMODE(owner_receipt.stat().st_mode) == 0o600)
+    receipt = json.loads(owner_receipt.read_text())
+    check("initial expect returns unguessable local owner receipt",
+          event_module.UUID_LIKE_RE.fullmatch(
+              expectation["receipt_id"]
+          ) is not None and
+          owner_receipt.name == expectation["receipt_id"] + ".json" and
+          receipt["receipt_id"] == expectation["receipt_id"] and
+          receipt["lane_id"] == "lane-basic" and
+          receipt["owner_id"] == OWNER and
+          expectation["environment"] == {
+              "CORTEX_PHASE_RECEIPT_ID": expectation["receipt_id"],
+          })
+    first_status = subprocess.run(
+        [
+            str(TOOL), "status", "--receipt-id",
+            expectation["receipt_id"],
+        ],
+        env=environment(root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    second_status = subprocess.run(
+        [
+            str(TOOL), "status", "--receipt-id",
+            expectation["receipt_id"],
+        ],
+        env=environment(root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    check("status JSON is deterministic",
+          first_status.stdout == second_status.stdout)
+
+    duplicate_process, duplicate = run(
+        root,
+        "complete", "--lane-id", "lane-basic", "--owner-id", OWNER,
+        "--phase-instance-id", phase["phase_instance_id"],
+        "--status", "ok",
+    )
+    conflict_process, conflict = run(
+        root,
+        "complete", "--lane-id", "lane-basic", "--owner-id", OWNER,
+        "--phase-instance-id", phase["phase_instance_id"],
+        "--status", "failed",
+    )
+    check("duplicate terminal fails open with bounded reason",
+          duplicate_process.returncode == 0 and not duplicate["ok"] and
+          duplicate["reason_code"] == "duplicate_terminal")
+    check("conflicting terminal fails open with bounded reason",
+          conflict_process.returncode == 0 and not conflict["ok"] and
+          conflict["reason_code"] == "conflicting_terminal")
+    check("rejected terminals append no history",
+          len(events(root)) == len(lifecycle))
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    _, harness = expected(root, "lane-adopt")
+    _, adopted = expected(
+        root,
+        "lane-adopt",
+        origin="runtime",
+        enforcement="model_owned",
+        if_absent=True,
+    )
+    check("runtime expect-if-absent adopts harness expectation",
+          adopted["adopted"] and
+          adopted["expectation_id"] == harness["expectation_id"] and
+          adopted["run_id"] is None)
+    check("adoption emits one denominator row",
+          [item["event_type"] for item in events(root)].count(
+              "phase.expected"
+          ) == 1)
+    _, first_runtime = expected(
+        root,
+        "lane-runtime-reuse",
+        origin="runtime",
+        enforcement="model_owned",
+        if_absent=True,
+    )
+    _, reused_runtime = expected(
+        root,
+        "lane-runtime-reuse",
+        origin="runtime",
+        enforcement="model_owned",
+        if_absent=True,
+    )
+    check("runtime expect-if-absent reuses a pending runtime expectation",
+          not reused_runtime["adopted"] and reused_runtime["reused"] and
+          reused_runtime["expectation_id"] ==
+          first_runtime["expectation_id"] and
+          reused_runtime["run_id"] is None)
+    check("runtime reuse emits one denominator row",
+          len([
+              item for item in events(root)
+              if item["event_type"] == "phase.expected"
+              and item["attributes"]["lane_id_hash"] ==
+              phase_runtime.sha256_text("lane-runtime-reuse")
+          ]) == 1)
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    _, expectation = expected(root, "lane-skip")
+    skip_process, skipped = run(
+        root,
+        "skip", "--lane-id", "lane-skip", "--owner-id", OWNER,
+        "--expectation-id", expectation["expectation_id"],
+        "--reason-code", "not_applicable",
+    )
+    _, skip_status = run(
+        root,
+        "status", "--lane-id", "lane-skip", "--owner-id", OWNER,
+    )
+    check("intentional skip terminalizes one pending expectation",
+          skip_process.returncode == 0 and skipped["ok"] and
+          skip_status["expectations"][0]["status"] == "skipped" and
+          events(root)[-1]["event_type"] == "phase.skipped")
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    _, first = expected(root, "lane-owner")
+    owner_process, owner_result = expected(
+        root, "lane-owner", owner=OTHER_OWNER
+    )
+    check("second owner cannot merge into live lane",
+          first["ok"] and owner_process.returncode == 0 and
+          not owner_result["ok"] and
+          owner_result["reason_code"] == "concurrent_lane")
+    check("owner conflict emits no duplicate expectation",
+          len(events(root)) == 1)
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys,time;"
+                "sys.path.insert(0,sys.argv[1]);"
+                "import cognition_phase as phase;"
+                "from pathlib import Path;"
+                "lock=phase._state_lock(Path(sys.argv[2]));"
+                "lock.__enter__();"
+                "print('locked',flush=True);"
+                "time.sleep(0.35);"
+                "lock.__exit__(None,None,None)"
+            ),
+            str(TOOLS),
+            str(root),
+        ],
+        env=environment(root),
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    ready = holder.stdout.readline().strip()
+    waiting = subprocess.Popen(
+        [
+            str(TOOL), "expect", "--lane-id", "lane-lock-order",
+            "--owner-id", OWNER, "--phase", "wake", "--skill", "recall",
+            "--trigger", "session_start",
+        ],
+        env=environment(root),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    time.sleep(0.1)
+    appended_while_locked = (
+        root / ".cortex/events.jsonl"
+    ).exists()
+    stdout, _ = waiting.communicate()
+    holder.wait()
+    check("phase state lock is acquired before event append",
+          ready == "locked" and not appended_while_locked and
+          waiting.returncode == 0 and json.loads(stdout)["ok"])
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    _, root_phase = started(root, "lane-nesting")
+    conflict_process, conflict = started(root, "lane-nesting")
+    _, child = started(
+        root,
+        "lane-nesting",
+        phase="work",
+        skill="ambient",
+        trigger="work_boundary",
+        parent=root_phase["phase_instance_id"],
+    )
+    parent_process, parent_result = run(
+        root,
+        "complete", "--lane-id", "lane-nesting", "--owner-id", OWNER,
+        "--phase-instance-id", root_phase["phase_instance_id"],
+        "--status", "ok",
+    )
+    run(
+        root,
+        "complete", "--lane-id", "lane-nesting", "--owner-id", OWNER,
+        "--phase-instance-id", child["phase_instance_id"], "--status", "ok",
+    )
+    _, parent_complete = run(
+        root,
+        "complete", "--lane-id", "lane-nesting", "--owner-id", OWNER,
+        "--phase-instance-id", root_phase["phase_instance_id"],
+        "--status", "ok",
+    )
+    check("second root start requires explicit parent",
+          conflict_process.returncode == 0 and
+          conflict["reason_code"] == "active_phase_conflict")
+    check("explicit active parent permits nesting",
+          child["ok"] and child["phase_instance_id"])
+    check("parent cannot complete before active child",
+          parent_process.returncode == 0 and
+          parent_result["reason_code"] == "active_child_phase")
+    check("parent completes after child", parent_complete["ok"])
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    _, root_phase = started(root, "lane-leaf-complete")
+    receipt_id = root_phase["receipt_id"]
+    _, child = started(
+        root,
+        "lane-leaf-complete",
+        phase="work",
+        skill="ambient",
+        trigger="work_boundary",
+        parent=root_phase["phase_instance_id"],
+        receipt_id=receipt_id,
+    )
+    _, child_complete = run(
+        root,
+        "complete", "--receipt-id", receipt_id, "--status", "ok",
+    )
+    _, root_complete = run(
+        root,
+        "complete", "--receipt-id", receipt_id, "--status", "ok",
+    )
+    _, absent = run(
+        root,
+        "complete", "--receipt-id", receipt_id, "--status", "ok",
+    )
+    check("receipt-only completion resolves active leaf phase",
+          child_complete["ok"] and
+          child_complete["phase_instance_id"] ==
+          child["phase_instance_id"])
+    check("receipt-only completion then resolves active parent",
+          root_complete["ok"] and
+          root_complete["phase_instance_id"] ==
+          root_phase["phase_instance_id"])
+    check("receipt-only completion reports zero active phases",
+          not absent["ok"] and
+          absent["reason_code"] == "active_phase_not_found")
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    _, root_phase = started(root, "lane-ambiguous-leaves")
+    receipt_id = root_phase["receipt_id"]
+    started(
+        root,
+        "lane-ambiguous-leaves",
+        phase="work",
+        skill="ambient",
+        trigger="work_boundary",
+        parent=root_phase["phase_instance_id"],
+        receipt_id=receipt_id,
+    )
+    started(
+        root,
+        "lane-ambiguous-leaves",
+        phase="sleep",
+        skill="consolidate",
+        trigger="operator_request",
+        parent=root_phase["phase_instance_id"],
+        receipt_id=receipt_id,
+    )
+    ambiguous_process, ambiguous = run(
+        root,
+        "complete", "--receipt-id", receipt_id, "--status", "ok",
+    )
+    check("receipt-only completion rejects ambiguous active leaves",
+          ambiguous_process.returncode == 0 and not ambiguous["ok"] and
+          ambiguous["reason_code"] == "active_phase_ambiguous")
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    _, required = expected(
+        root, "lane-finalize", requirement="required"
+    )
+    _, offered = expected(
+        root,
+        "lane-finalize",
+        phase="curate",
+        skill="curate",
+        trigger="curate_debt",
+        requirement="offered",
+        effect="none",
+    )
+    _, active = started(
+        root,
+        "lane-finalize",
+        expectation_id=required["expectation_id"],
+    )
+    finalize_process, finalized = run(
+        root,
+        "finalize", "--lane-id", "lane-finalize", "--owner-id", OWNER,
+        "--session-ended",
+    )
+    terminal_events = events(root)[-2:]
+    check("session finalize immediately terminalizes pending and active",
+          finalize_process.returncode == 0 and
+          {item["event_type"] for item in terminal_events} ==
+          {"phase.missed", "phase.abandoned"} and
+          finalized["counts"]["active"] == 0)
+    missed = next(
+        item for item in events(root)
+        if item["event_type"] == "phase.missed"
+    )
+    check("offered miss retains offered denominator",
+          missed["attributes"]["expectation_id"] ==
+          offered["expectation_id"] and
+          missed["attributes"]["requirement"] == "offered")
+    check("finalize clears named gaps", finalized["gaps"] == [])
+    markdown_process = subprocess.run(
+        [
+            str(TOOL), "status", "--lane-id", "lane-finalize",
+            "--owner-id", OWNER, "--markdown",
+        ],
+        env=environment(root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    check("status supports deterministic Markdown",
+          markdown_process.returncode == 0 and
+          markdown_process.stdout.startswith("# cognition phase status"))
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    _, pending = expected(
+        root,
+        "lane-stale",
+        env={"CORTEX_PHASE_LEASE_SECONDS": "1"},
+    )
+    _, active = started(
+        root,
+        "lane-stale",
+        phase="sleep",
+        skill="consolidate",
+        trigger="operator_request",
+        env={"CORTEX_PHASE_LEASE_SECONDS": "1"},
+    )
+    stale_receipt_process, stale_receipt = run(
+        root,
+        "complete", "--receipt-id", pending["receipt_id"],
+        "--phase-instance-id", active["phase_instance_id"],
+        "--status", "ok",
+        CORTEX_PHASE_TIME=TIME2,
+        CORTEX_EVENT_TIME=TIME2,
+        CORTEX_PHASE_LEASE_SECONDS="1",
+    )
+    stale_process, stale = run(
+        root,
+        "complete", "--lane-id", "lane-stale", "--owner-id", OWNER,
+        "--phase-instance-id", active["phase_instance_id"],
+        "--status", "ok",
+        CORTEX_PHASE_TIME=TIME2,
+        CORTEX_EVENT_TIME=TIME2,
+        CORTEX_PHASE_LEASE_SECONDS="1",
+    )
+    reconcile_process, reconciled = run(
+        root,
+        "reconcile", "--lane-id", "lane-stale", "--owner-id", OWNER,
+        CORTEX_PHASE_TIME=TIME2,
+        CORTEX_EVENT_TIME=TIME2,
+        CORTEX_PHASE_LEASE_SECONDS="1",
+    )
+    check("stale active phase cannot be revived by completion",
+          stale_process.returncode == 0 and not stale["ok"] and
+          stale["reason_code"] == "stale_lane")
+    check("stale receipt is rejected before lifecycle mutation",
+          stale_receipt_process.returncode == 0 and
+          not stale_receipt["ok"] and
+          stale_receipt["reason_code"] ==
+          "phase_owner_receipt_stale")
+    check("expired expectation becomes missed",
+          reconcile_process.returncode == 0 and
+          any(
+              item["event_type"] == "phase.missed"
+              and item["expectation_id"] == pending["expectation_id"]
+              for item in reconciled["emitted"]
+          ))
+    check("expired active phase becomes abandoned",
+          any(
+              item["event_type"] == "phase.abandoned"
+              and item["phase_instance_id"] == active["phase_instance_id"]
+              for item in reconciled["emitted"]
+          ))
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    old = {
+        key: os.environ.get(key)
+        for key in (
+            "CORTEX_REPO_ROOT", "CORTEX_EVENT_REPO_ROOT",
+            "CORTEX_EVENTS_FILE", "CORTEX_PHASE_TIME",
+            "CORTEX_EVENT_TIME", "CORTEX_PHASE_LEASE_SECONDS",
+        )
+    }
+    os.environ.update(environment(root))
+    original_save = phase_runtime._save_state
+
+    def fail_cache_write(*_args, **_kwargs):
+        raise phase_runtime.PhaseAdvisoryError(
+            "phase_state_write_failed"
+        )
+
+    phase_runtime._save_state = fail_cache_write
+    split = False
+    try:
+        phase_runtime.expect(
+            root=root,
+            lane_id="lane-split",
+            owner_id=OWNER,
+            receipt_id=None,
+            phase="wake",
+            skill="recall",
+            trigger="session_start",
+            origin="harness",
+            requirement="required",
+            enforcement="enforced",
+            effect="none",
+            if_absent=False,
+        )
+    except phase_runtime.PhaseAdvisoryError as exc:
+        split = exc.code == "phase_state_write_failed"
+    finally:
+        phase_runtime._save_state = original_save
+        for key, value in old.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    _, recovered = run(
+        root,
+        "reconcile", "--lane-id", "lane-split", "--owner-id", OWNER,
+    )
+    check("split write leaves authoritative event",
+          split and len(events(root)) == 1)
+    check("reconcile rebuilds cache after split write",
+          len(recovered["expectations"]) == 1 and
+          recovered["expectations"][0]["status"] == "pending")
+
+    state_path = root / ".cortex/cognition-phase/state.json"
+    cached = json.loads(state_path.read_text())
+    lane_hash = recovered["lane_id_hash"]
+    cached["lanes"][lane_hash]["expectations"][
+        "33333333333333333333333333333333"
+    ] = {
+        "expectation_id": "33333333333333333333333333333333",
+        "status": "pending",
+    }
+    state_path.write_text(json.dumps(cached))
+    _, discarded = run(
+        root,
+        "reconcile", "--lane-id", "lane-split", "--owner-id", OWNER,
+    )
+    check("state without an event is discarded and reported",
+          discarded["discarded_cache_entries"] == [
+              "expectations:33333333333333333333333333333333"
+          ])
+    state_path.write_text("{not-json")
+    _, corrupt_recovered = run(
+        root,
+        "reconcile", "--lane-id", "lane-split", "--owner-id", OWNER,
+    )
+    check("corrupt cache is discarded and rebuilt from events",
+          corrupt_recovered["discarded_cache_entries"] == [
+              "state:invalid"
+          ] and len(corrupt_recovered["expectations"]) == 1)
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    disabled_process, disabled = run(
+        root,
+        "expect", "--lane-id", "lane-disabled", "--owner-id", OWNER,
+        "--phase", "wake", "--skill", "recall",
+        "--trigger", "session_start",
+        CORTEX_EVENTS="off",
+    )
+    check("disabled events fail open with bounded reason",
+          disabled_process.returncode == 0 and not disabled["ok"] and
+          disabled["reason_code"] == "phase_events_disabled")
+    check("disabled events create no lifecycle state",
+          not (root / ".cortex/cognition-phase/state.json").exists())
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    (root / ".cortex/event-directory").mkdir(parents=True)
+    failed_process, event_failed = run(
+        root,
+        "expect", "--lane-id", "lane-event-failure",
+        "--owner-id", OWNER, "--phase", "wake", "--skill", "recall",
+        "--trigger", "session_start",
+        CORTEX_EVENTS_FILE=".cortex/event-directory",
+    )
+    check("event sink failure is advisory",
+          failed_process.returncode == 0 and not event_failed["ok"] and
+          event_failed["reason_code"] == "event_write_failed")
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    outside = root / "outside-state"
+    outside.mkdir()
+    (root / ".cortex").symlink_to(outside, target_is_directory=True)
+    state_process, state_failed = run(
+        root,
+        "expect", "--lane-id", "lane-state-symlink",
+        "--owner-id", OWNER, "--phase", "wake", "--skill", "recall",
+        "--trigger", "session_start",
+    )
+    check("symlinked phase state parent is rejected",
+          state_process.returncode == 0 and not state_failed["ok"] and
+          state_failed["reason_code"] == "phase_path_parent_invalid")
+    check("symlinked phase state parent receives no files",
+          not any(outside.iterdir()))
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    invalid_process = subprocess.run(
+        [
+            str(TOOL), "expect", "--lane-id", "lane-invalid",
+            "--owner-id", OWNER, "--phase", "private phase",
+            "--skill", "recall", "--trigger", "session_start",
+        ],
+        env=environment(root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    invalid_owner = subprocess.run(
+        [
+            str(TOOL), "status", "--lane-id", "lane-invalid",
+            "--owner-id", "not-a-uuid",
+        ],
+        env=environment(root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    check("invalid lifecycle enum exits nonzero",
+          invalid_process.returncode == 2)
+    check("invalid owner exits nonzero", invalid_owner.returncode == 2)
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    _, expectation = expected(root, "lane-receipt-validation")
+    receipt_id = expectation["receipt_id"]
+    missing_process, missing = run(
+        root,
+        "status", "--receipt-id", "7" * 32,
+    )
+    mismatch_process, mismatch = run(
+        root,
+        "status", "--receipt-id", receipt_id,
+        "--lane-id", "different-lane", "--owner-id", OWNER,
+    )
+    invalid_process = subprocess.run(
+        [str(TOOL), "status", "--receipt-id", "not-a-uuid"],
+        env=environment(root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    env_process = subprocess.run(
+        [str(TOOL), "status"],
+        env=environment(root, CORTEX_PHASE_RECEIPT_ID=receipt_id),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    env_start = subprocess.run(
+        [
+            str(TOOL), "start",
+            "--phase", "wake", "--skill", "recall",
+            "--trigger", "session_start",
+        ],
+        env=environment(root, CORTEX_PHASE_RECEIPT_ID=receipt_id),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    check("missing receipt fails open with bounded reason",
+          missing_process.returncode == 0 and not missing["ok"] and
+          missing["reason_code"] == "phase_owner_receipt_not_found")
+    check("mismatched receipt and explicit context are rejected",
+          mismatch_process.returncode == 0 and not mismatch["ok"] and
+          mismatch["reason_code"] == "phase_owner_receipt_mismatch")
+    check("invalid receipt token exits nonzero",
+          invalid_process.returncode == 2)
+    check("receipt environment resolves lane and owner locally",
+          env_process.returncode == 0 and
+          json.loads(env_process.stdout)["receipt_id"] == receipt_id)
+    check("later phase start accepts receipt environment only",
+          env_start.returncode == 0 and
+          json.loads(env_start.stdout)["receipt_id"] == receipt_id)
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    _, expectation = expected(root, "lane-tampered-receipt")
+    receipt_path = (
+        root / ".cortex/cognition-phase/owners"
+        / f"{expectation['receipt_id']}.json"
+    )
+    receipt = json.loads(receipt_path.read_text())
+    receipt["lane_id"] = "tampered-lane"
+    receipt_path.write_text(json.dumps(receipt))
+    tampered_process, tampered = run(
+        root,
+        "status", "--receipt-id", expectation["receipt_id"],
+    )
+    check("tampered receipt contents are rejected",
+          tampered_process.returncode == 0 and not tampered["ok"] and
+          tampered["reason_code"] == "phase_owner_receipt_invalid")
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    (root / ".cortex").mkdir()
+    lane_hash = event_module.sha256_text("lane-malformed")
+    (root / ".cortex/events.jsonl").write_text(json.dumps({
+        "schema_version": "1",
+        "event_id": "4" * 32,
+        "timestamp": TIME0,
+        "event_type": "phase.expected",
+        "run_id": "5" * 32,
+        "attributes": {
+            "lane_id_hash": lane_hash,
+            "correlation": "exact",
+            "prompt": "private_prompt_token",
+        },
+    }) + "\n")
+    _, malformed = run(
+        root,
+        "status", "--lane-id", "lane-malformed", "--owner-id", OWNER,
+    )
+    check("malformed lifecycle history is reported, not trusted",
+          not malformed["ok"] and
+          malformed["errors"] == ["invalid_lifecycle_event"])
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    _, phase = started(root, "lane-context")
+    context = phase["environment"]
+    exact = subprocess.run(
+        [
+            str(EVENT_TOOL), "emit", "retrieval.search", "ok",
+            "--attribute", "mode=bm25", "--attribute", "scope=global",
+            "--hash", "query_sha256=" + "a" * 64,
+            "--phase-instance-id", context["CORTEX_PHASE_INSTANCE_ID"],
+            "--phase-start-run-id",
+            context["CORTEX_PHASE_START_RUN_ID"],
+            "--phase", context["CORTEX_PHASE_NAME"],
+            "--skill", context["CORTEX_PHASE_SKILL"],
+            "--phase-receipt-id",
+            context["CORTEX_PHASE_RECEIPT_ID"],
+            "--json",
+        ],
+        env=environment(root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    exact_event = json.loads(exact.stdout)
+    unavailable = subprocess.run(
+        [
+            str(EVENT_TOOL), "emit", "retrieval.fetch", "ok",
+            "--phase-instance-id", "3" * 32,
+            "--phase-start-run-id",
+            context["CORTEX_PHASE_START_RUN_ID"],
+            "--phase", context["CORTEX_PHASE_NAME"],
+            "--skill", context["CORTEX_PHASE_SKILL"],
+            "--phase-receipt-id",
+            context["CORTEX_PHASE_RECEIPT_ID"],
+            "--json",
+        ],
+        env=environment(root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    unavailable_event = json.loads(unavailable.stdout)
+    check("exact runtime context parents mechanism event",
+          exact.returncode == 0 and
+          exact_event["parent_run_id"] ==
+          context["CORTEX_PHASE_START_RUN_ID"] and
+          exact_event["attributes"]["phase_instance_id"] ==
+          context["CORTEX_PHASE_INSTANCE_ID"] and
+          exact_event["attributes"]["correlation"] == "exact" and
+          context["CORTEX_PHASE_RECEIPT_ID"] not in
+          json.dumps(exact_event))
+    check("mismatched runtime context preserves uncorrelated event",
+          unavailable.returncode == 0 and
+          unavailable_event["parent_run_id"] is None and
+          unavailable_event["attributes"]["correlation"] ==
+          "unavailable" and
+          unavailable_event["attributes"]["phase_correlation_reason"] ==
+          "phase_context_mismatch")
+
+    completion_attributes = {
+        "phase": "wake",
+        "skill": "recall",
+        "correlation": "exact",
+        "lane_id_hash": exact_event["attributes"]["lane_id_hash"],
+        "owner_id_hash": exact_event["attributes"]["owner_id_hash"],
+        "lease_seconds": 30,
+        "effect": "none",
+        "phase_instance_id": context["CORTEX_PHASE_INSTANCE_ID"],
+        "phase_start_run_id": context["CORTEX_PHASE_START_RUN_ID"],
+    }
+    old_event_file = os.environ.get("CORTEX_EVENTS_FILE")
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    try:
+        event_module.emit_event(
+            "phase.completed",
+            "ok",
+            root=root,
+            parent_run_id=context["CORTEX_PHASE_START_RUN_ID"],
+            attributes=completion_attributes,
+            inherit_phase_context=False,
+        )
+        event_module.emit_event(
+            "phase.completed",
+            "failed",
+            root=root,
+            parent_run_id=context["CORTEX_PHASE_START_RUN_ID"],
+            attributes=completion_attributes,
+            inherit_phase_context=False,
+        )
+    finally:
+        if old_event_file is None:
+            os.environ.pop("CORTEX_EVENTS_FILE", None)
+        else:
+            os.environ["CORTEX_EVENTS_FILE"] = old_event_file
+    _, ordering = run(
+        root,
+        "reconcile", "--lane-id", "lane-context", "--owner-id", OWNER,
+    )
+    check("reconcile reports conflicting valid terminals",
+          not ordering["ok"] and
+          "conflicting_phase_terminal" in ordering["errors"])
+
+print(f"\n{passed} passed, {failed} failed")
+sys.exit(1 if failed else 0)

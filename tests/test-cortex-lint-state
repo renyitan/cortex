@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Deterministic consumer-state tests for cortex-lint memory-link semantics.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/cortex-lint-state.XXXXXX")"
+trap 'rm -rf "$TMP"' EXIT
+mkdir -p "$TMP/memory" "$TMP/workspace"
+printf '# Decisions\n' > "$TMP/memory/decisions.md"
+
+record() {
+  local link="$1"
+  cat > "$TMP/memory/learnings.md" <<EOF
+# Learnings
+
+### valid  ·  type:pattern  ·  conf:8/10
+insight:  Valid record.
+trigger:  testing
+tags:     fixture, lint, links
+evidence: fixture · 2026-07-01
+source:   observed      scope: global
+updated:  2026-07-01
+$link
+EOF
+}
+
+passed=0
+failed=0
+check() {
+  if "$@"; then
+    passed=$((passed + 1))
+    printf '  PASS  %s\n' "$*"
+  else
+    failed=$((failed + 1))
+    printf '  FAIL  %s\n' "$*"
+  fi
+}
+
+record "see-also: absent-soft"
+soft="$(CORTEX_LINT_STATE_ROOT="$TMP" "$ROOT/scripts/cortex-lint" 2>&1)"
+soft_rc=$?
+check test "$soft_rc" -eq 0
+check grep -q "dangling see-also" <<< "$soft"
+
+record "derives-from: absent-hard"
+hard="$(CORTEX_LINT_STATE_ROOT="$TMP" "$ROOT/scripts/cortex-lint" 2>&1)"
+hard_rc=$?
+check test "$hard_rc" -eq 1
+check grep -q "dangling derives-from" <<< "$hard"
+
+record ""
+cat >> "$TMP/memory/learnings.md" <<'EOF'
+
+### valid  ·  type:pattern  ·  conf:7/10
+insight:  Duplicate fixture record.
+trigger:  testing duplicate keys
+tags:     fixture, duplicate, lint
+evidence: fixture · 2026-07-01
+source:   observed      scope: global
+updated:  2026-07-01
+EOF
+duplicate="$(CORTEX_LINT_STATE_ROOT="$TMP" "$ROOT/scripts/cortex-lint" 2>&1)"
+duplicate_rc=$?
+check test "$duplicate_rc" -eq 1
+check grep -q "duplicate memory key" <<< "$duplicate"
+
+record ""
+clean="$(CORTEX_LINT_STATE_ROOT="$TMP" "$ROOT/scripts/cortex-lint" 2>&1)"
+clean_rc=$?
+check test "$clean_rc" -eq 0
+check grep -q "every derives-from / see-also key resolves" <<< "$clean"
+
+printf '\n%s passed, %s failed\n' "$passed" "$failed"
+exit "$failed"

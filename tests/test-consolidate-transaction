@@ -1,0 +1,1015 @@
+#!/usr/bin/env python3
+"""Deterministic tests for validated consolidation transactions."""
+from __future__ import annotations
+
+import copy
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+TOOLS = ROOT / "plugins/cortex/tools"
+PHASE_TOOL = TOOLS / "cognition-phase"
+sys.path.insert(0, str(TOOLS))
+tx = SourceFileLoader(
+    "consolidation_transaction",
+    str(TOOLS / "consolidation_transaction.py"),
+).load_module()
+
+BASE_RECORD = """### base  ·  type:pattern  ·  conf:8/10
+insight:  Existing base lesson.
+trigger:  testing transactions
+tags:     base, fixture, transaction
+evidence: fixture · 2026-07-01
+source:   observed      scope: global
+updated:  2026-07-01
+"""
+
+LEARNED_RECORD = """### learned  ·  type:pattern  ·  conf:7/10
+insight:  Transactions preserve exact approved memory changes.
+trigger:  applying consolidation
+tags:     transaction, approval, memory
+evidence: workspace/demo/episode.md · 2026-07-01
+source:   observed      scope: global
+updated:  2026-07-01
+derives-from: base
+"""
+
+COMPANION_RECORD = """### companion  ·  type:operational  ·  conf:6/10
+insight:  Partial receipts require reconciliation before resuming.
+trigger:  recovering consolidation
+tags:     receipt, recovery, reconciliation
+evidence: workspace/demo/episode.md · 2026-07-01
+source:   observed      scope: global
+updated:  2026-07-01
+derives-from: learned
+"""
+
+passed = failed = 0
+
+
+def check(name, condition):
+    global passed, failed
+    if condition:
+        passed += 1
+        print(f"  PASS  {name}")
+    else:
+        failed += 1
+        print(f"  FAIL  {name}")
+
+
+def expect_error(name, code, action):
+    try:
+        action()
+    except tx.TransactionError as exc:
+        check(name, exc.code == code)
+        if exc.code != code:
+            print(f"        expected {code}, got {exc.code}")
+    else:
+        check(name, False)
+
+
+def fixture(root: Path):
+    (root / "memory").mkdir()
+    (root / "workspace/demo").mkdir(parents=True)
+    (root / "memory/learnings.md").write_text("# Learnings\n\n" + BASE_RECORD)
+    (root / "memory/decisions.md").write_text("# Decisions\n")
+    (root / "workspace/demo/episode.md").write_text("# Episode\n")
+    line = (
+        "- captured: 2026-07-01  status: open  "
+        "note: private transaction fixture"
+    )
+    (root / "workspace/demo/intake.md").write_text(
+        "# intake\n\n"
+        "Schema: `- captured: <date>  status: <open|drained>`\n\n"
+        + line + "\n"
+    )
+    return line
+
+
+def draft(root: Path, transaction_id="tx-fixture"):
+    line = next(
+        line
+        for line in (root / "workspace/demo/intake.md").read_text().splitlines()
+        if line.startswith("- captured:")
+    )
+    candidate = tx.intake_ref("workspace/demo/intake.md", line)
+    return {
+        "schema": tx.PLAN_SCHEMA,
+        "transaction_id": transaction_id,
+        "created_at": "2026-07-01T12:00:00Z",
+        "proposer": "model",
+        "origin": "episode:demo",
+        "run_kind": "done",
+        "candidate_refs": [candidate],
+        "evidence_refs": ["workspace/demo/episode.md"],
+        "approval": {"status": "pending", "approver_class": None},
+        "operations": [
+            {
+                "index": 0,
+                "op": "append_record",
+                "target": "memory/learnings.md",
+                "record": LEARNED_RECORD,
+            },
+            {
+                "index": 1,
+                "op": "append_record",
+                "target": "memory/learnings.md",
+                "record": COMPANION_RECORD,
+            },
+            {
+                "index": 2,
+                "op": "intake_status",
+                "target": "workspace/demo/intake.md",
+                "candidate_ref": candidate,
+                "from": "open",
+                "to": "drained",
+                "derives_to": "learned",
+            },
+        ],
+    }
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    plan, outputs = tx.prepare_plan(draft(root), root)
+
+    check("prepare folds same-file operations into one target",
+          [target["path"] for target in plan["targets"]] ==
+          ["memory/learnings.md", "workspace/demo/intake.md"])
+    check("prepare computes exact pre-image and result hashes",
+          plan["targets"][0]["preimage_sha256"] ==
+          tx.sha256_text((root / "memory/learnings.md").read_text()) and
+          plan["targets"][0]["result_sha256"] ==
+          tx.sha256_text(outputs["memory/learnings.md"]))
+    preview = tx.preview_plan(plan, root)
+    check("preview shows both memory records and intake transition",
+          "### learned" in preview and "### companion" in preview and
+          "status: drained" in preview)
+
+    candidates = tx.inspect_intake(root, "workspace/demo/intake.md")
+    check("intake inspection returns content-free stable candidate",
+          len(candidates) == 1 and
+          candidates[0]["ref"] == plan["candidate_refs"][0] and
+          candidates[0]["captured"] == "2026-07-01" and
+          "note" not in candidates[0])
+    schema_line = (
+        root / "workspace/demo/intake.md"
+    ).read_text().splitlines()[2]
+    schema_ref = tx.intake_ref("workspace/demo/intake.md", schema_line)
+    schema_candidate = copy.deepcopy(draft(root, "tx-schema-decoy"))
+    schema_candidate["candidate_refs"] = [schema_ref]
+    schema_candidate["operations"][2]["candidate_ref"] = schema_ref
+    expect_error(
+        "intake schema example cannot become a candidate",
+        "candidate_ref_missing",
+        lambda: tx.prepare_plan(schema_candidate, root),
+    )
+    link_dir = root / ".cortex/bin"
+    link_dir.mkdir(parents=True)
+    linked_tool = link_dir / "consolidate-transaction"
+    linked_tool.symlink_to(TOOLS / "consolidate-transaction")
+    inspected_process = subprocess.run(
+        [
+            str(linked_tool), "inspect-intake",
+            "workspace/demo/intake.md", "--json",
+        ],
+        env=dict(os.environ, CORTEX_REPO_ROOT=str(root)),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    check("symlinked transaction tool resolves its module",
+          inspected_process.returncode == 0 and
+          json.loads(inspected_process.stdout)["candidates"][0]["ref"] ==
+          plan["candidate_refs"][0])
+    outside_plan = root / "outside-plan.json"
+    outside_plan.write_text(json.dumps(draft(root)))
+    outside_process = subprocess.run(
+        [
+            str(linked_tool), "prepare", str(outside_plan),
+            "--output", str(root / ".cortex/consolidation/prepared.json"),
+        ],
+        env=dict(os.environ, CORTEX_REPO_ROOT=str(root)),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    check("CLI rejects plans outside private consolidation directory",
+          outside_process.returncode == 4 and
+          "operational_path_outside_cortex" in outside_process.stderr)
+    tx.write_operational_json(
+        root, ".cortex/consolidation/validated.json", plan
+    )
+    validate_process = subprocess.run(
+        [
+            str(linked_tool), "validate",
+            ".cortex/consolidation/validated.json", "--json",
+        ],
+        env=dict(os.environ, CORTEX_REPO_ROOT=str(root)),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    check("successful CLI validation emits its result",
+          validate_process.returncode == 0 and
+          json.loads(validate_process.stdout)["status"] == "ok")
+
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys,time;"
+                "sys.path.insert(0,sys.argv[1]);"
+                "import consolidation_transaction as tx;"
+                "from pathlib import Path;"
+                "lock=tx._apply_lock(Path(sys.argv[2]));"
+                "lock.__enter__();"
+                "print('locked',flush=True);"
+                "time.sleep(0.4);"
+                "lock.__exit__(None,None,None)"
+            ),
+            str(TOOLS),
+            str(root),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    ready = holder.stdout.readline().strip()
+    started = time.monotonic()
+    with tx._apply_lock(root):
+        waited = time.monotonic() - started
+    holder.wait()
+    check("repository apply lock serializes processes",
+          ready == "locked" and waited >= 0.25 and holder.returncode == 0)
+
+    expect_error(
+        "pending plan cannot apply",
+        "approval_required",
+        lambda: tx.apply_plan(plan, root),
+    )
+    rejected_receipt = json.loads(
+        tx.receipt_path(root, plan["transaction_id"]).read_text()
+    )
+    check("unapproved apply writes a rejected receipt",
+          rejected_receipt["status"] == "rejected" and
+          rejected_receipt["reason_code"] == "approval_required")
+    reused = copy.deepcopy(plan)
+    reused["approval"] = {
+        "status": "approved",
+        "approver_class": "self_authorized_agent",
+    }
+    expect_error(
+        "rejected transaction ID cannot be reused for a changed plan",
+        "receipt_plan_mismatch",
+        lambda: tx.apply_plan(reused, root),
+    )
+    plan["transaction_id"] = "tx-fixture-approved"
+    plan["approval"] = {
+        "status": "approved",
+        "approver_class": "self_authorized_agent",
+    }
+    partial = tx.apply_plan(plan, root, fail_after=1)
+    check("injected second-target failure produces partial receipt",
+          partial["status"] == "partial" and
+          [target["status"] for target in partial["targets"]] ==
+          ["applied", "pending"])
+    check("partial apply never claims cross-file atomicity",
+          "### companion" in (root / "memory/learnings.md").read_text() and
+          "status: open" in (root / "workspace/demo/intake.md").read_text())
+
+    reconciled = tx.reconcile_receipt(
+        tx.receipt_path(root, plan["transaction_id"]), root
+    )
+    check("reconciliation identifies resumable partial state",
+          reconciled["reconciliation"]["status"] == "partial_ready")
+    complete = tx.apply_plan(plan, root)
+    check("rerun resumes pending target and completes",
+          complete["status"] == "complete" and
+          "status: drained" in (root / "workspace/demo/intake.md").read_text())
+    apply_events = [
+        json.loads(line)
+        for line in (root / ".cortex/events.jsonl").read_text().splitlines()
+        if '"consolidation.apply_' in line
+    ]
+    check("apply events name absent phase correlation",
+          apply_events and all(
+              event["attributes"]["correlation"] == "unavailable"
+              and event["attributes"]["phase_correlation_reason"] ==
+              "phase_context_absent"
+              for event in apply_events
+          ))
+    complete_again = tx.apply_plan(plan, root)
+    check("complete transaction rerun is idempotent",
+          complete_again == complete)
+    check("receipt contains hashes and status but no private record content",
+          "private transaction fixture" not in json.dumps(complete) and
+          complete["targets"][0]["result_sha256"])
+
+    events = [
+        json.loads(line)
+        for line in (root / ".cortex/events.jsonl").read_text().splitlines()
+    ]
+    check("apply transitions are observable",
+          {event["event_type"] for event in events} >= {
+              "consolidation.apply_started",
+              "consolidation.apply_partial",
+              "consolidation.apply_completed",
+          })
+    check("transaction events contain hashes but no record content",
+          "Transactions preserve" not in json.dumps(events) and
+          any("plan_sha256" in event.get("attributes", {}).get("hashes", {})
+              for event in events))
+    check("transaction without exact phase context makes no effect claim",
+          not any(event["event_type"] == "phase.effect_committed"
+                  for event in events))
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    intake_first = draft(root, "tx-intake-first")
+    operations = intake_first["operations"]
+    intake_first["operations"] = [
+        operations[2], operations[0], operations[1]
+    ]
+    for index, operation in enumerate(intake_first["operations"]):
+        operation["index"] = index
+    prepared, _ = tx.prepare_plan(intake_first, root)
+    check("memory targets precede intake regardless of operation order",
+          [target["path"] for target in prepared["targets"]] == [
+              "memory/learnings.md", "workspace/demo/intake.md"
+          ])
+    prepared["approval"] = {
+        "status": "approved",
+        "approver_class": "self_authorized_agent",
+    }
+    partial = tx.apply_plan(prepared, root, fail_after=1)
+    check("partial apply cannot drain before durable write",
+          partial["status"] == "partial" and
+          "### learned" in (root / "memory/learnings.md").read_text() and
+          "status: open" in (root / "workspace/demo/intake.md").read_text())
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    crash_plan, _ = tx.prepare_plan(draft(root, "tx-crash-window"), root)
+    crash_plan["approval"] = {
+        "status": "approved",
+        "approver_class": "self_authorized_agent",
+    }
+    original_write = tx._write_receipt
+    writes = 0
+
+    def crash_before_target_receipt(receipt_root, transaction_id, receipt):
+        global writes
+        writes += 1
+        if writes == 2:
+            raise RuntimeError("simulated crash")
+        original_write(receipt_root, transaction_id, receipt)
+
+    tx._write_receipt = crash_before_target_receipt
+    crashed = False
+    try:
+        tx.apply_plan(crash_plan, root)
+    except RuntimeError:
+        crashed = True
+    finally:
+        tx._write_receipt = original_write
+    check("simulated crash lands between replacement and receipt update",
+          crashed and
+          "### learned" in (root / "memory/learnings.md").read_text() and
+          "status: open" in (root / "workspace/demo/intake.md").read_text())
+    reconciled = tx.reconcile_receipt(
+        tx.receipt_path(root, crash_plan["transaction_id"]), root
+    )
+    resumed = tx.apply_plan(crash_plan, root)
+    check("reconciliation makes crash-window result resumable",
+          reconciled["reconciliation"]["status"] == "partial_ready" and
+          resumed["status"] == "complete" and
+          "status: drained" in (root / "workspace/demo/intake.md").read_text())
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    base = draft(root, "tx-validation")
+
+    duplicate = copy.deepcopy(base)
+    duplicate["operations"][0]["record"] = BASE_RECORD
+    expect_error(
+        "duplicate record keys are rejected",
+        "duplicate_record_key",
+        lambda: tx.prepare_plan(duplicate, root),
+    )
+
+    dangling = copy.deepcopy(base)
+    dangling["operations"][0]["record"] = LEARNED_RECORD.replace(
+        "derives-from: base", "derives-from: absent"
+    )
+    dangling["operations"] = [dangling["operations"][0]]
+    expect_error(
+        "unresolved hard derivation is rejected",
+        "hard_derivation_unresolved",
+        lambda: tx.prepare_plan(dangling, root),
+    )
+
+    missing_intake_derivation = copy.deepcopy(base)
+    missing_intake_derivation["operations"][2]["derives_to"] = "missing"
+    expect_error(
+        "drain to missing durable record is rejected",
+        "intake_derivation_unresolved",
+        lambda: tx.prepare_plan(missing_intake_derivation, root),
+    )
+
+    non_atomic = copy.deepcopy(base)
+    non_atomic["operations"][0]["record"] = LEARNED_RECORD.replace(
+        "Transactions preserve exact approved memory changes.",
+        "Transactions preserve exact approved memory changes while also "
+        "explaining several unrelated recovery ideas that should instead "
+        "be represented as separate independently retrievable records for "
+        "future work.",
+    )
+    expect_error(
+        "non-atomic insight is rejected",
+        "insight_not_atomic",
+        lambda: tx.prepare_plan(non_atomic, root),
+    )
+
+    stale_status = copy.deepcopy(base)
+    stale_status["operations"][2]["from"] = "proposed"
+    expect_error(
+        "stale intake transition is rejected",
+        "intake_status_stale",
+        lambda: tx.prepare_plan(stale_status, root),
+    )
+
+    traversal = copy.deepcopy(base)
+    traversal["operations"][0]["target"] = "../memory/learnings.md"
+    expect_error(
+        "path traversal is rejected",
+        "target_not_allowed",
+        lambda: tx.prepare_plan(traversal, root),
+    )
+
+    silent_delete = copy.deepcopy(base)
+    silent_delete["operations"][0]["op"] = "delete_record"
+    expect_error(
+        "delete operations are rejected",
+        "operation_not_allowed",
+        lambda: tx.prepare_plan(silent_delete, root),
+    )
+
+    unordered = copy.deepcopy(base)
+    unordered["operations"][1]["index"] = 8
+    expect_error(
+        "ambiguous operation order is rejected",
+        "ambiguous_operation_order",
+        lambda: tx.prepare_plan(unordered, root),
+    )
+
+    missing_candidate = copy.deepcopy(base)
+    missing_candidate["candidate_refs"][0] = (
+        "workspace/demo/intake.md::line-sha256:" + "0" * 64
+    )
+    missing_candidate["operations"][2]["candidate_ref"] = (
+        missing_candidate["candidate_refs"][0]
+    )
+    expect_error(
+        "missing candidate ref is rejected",
+        "candidate_ref_missing",
+        lambda: tx.prepare_plan(missing_candidate, root),
+    )
+
+    duplicate_candidate = copy.deepcopy(base)
+    duplicate_candidate["candidate_refs"].append(
+        duplicate_candidate["candidate_refs"][0]
+    )
+    expect_error(
+        "duplicate candidate refs are rejected",
+        "duplicate_candidate_ref",
+        lambda: tx.prepare_plan(duplicate_candidate, root),
+    )
+
+    unsafe_id = copy.deepcopy(base)
+    unsafe_id["transaction_id"] = "../../outside"
+    expect_error(
+        "transaction IDs cannot escape receipt directory",
+        "invalid_transaction_id",
+        lambda: tx.prepare_plan(unsafe_id, root),
+    )
+
+    missing_evidence = copy.deepcopy(base)
+    missing_evidence["evidence_refs"] = ["workspace/demo/absent.md"]
+    expect_error(
+        "missing evidence refs are rejected",
+        "evidence_ref_missing",
+        lambda: tx.prepare_plan(missing_evidence, root),
+    )
+
+    prepared, _ = tx.prepare_plan(base, root)
+    tampered = copy.deepcopy(prepared)
+    tampered["targets"][0]["result_sha256"] = "0" * 64
+    expect_error(
+        "tampered result hash is rejected",
+        "result_hash_mismatch",
+        lambda: tx.evaluate_prepared(tampered, root),
+    )
+    (root / "memory/learnings.md").write_text(
+        (root / "memory/learnings.md").read_text() + "\n"
+    )
+    expect_error(
+        "changed pre-image is rejected",
+        "preimage_mismatch",
+        lambda: tx.evaluate_prepared(prepared, root),
+    )
+    prepared["approval"] = {
+        "status": "approved",
+        "approver_class": "self_authorized_agent",
+    }
+    expect_error(
+        "stale apply is rejected",
+        "preimage_mismatch",
+        lambda: tx.apply_plan(prepared, root),
+    )
+    stale_receipt = json.loads(
+        tx.receipt_path(root, prepared["transaction_id"]).read_text()
+    )
+    check("stale apply writes a stale receipt",
+          stale_receipt["status"] == "stale" and
+          stale_receipt["reason_code"] == "preimage_mismatch")
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    event_directory = root / ".cortex/event-directory"
+    event_directory.mkdir(parents=True)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/event-directory"
+    plan, _ = tx.prepare_plan(draft(root, "tx-event-failure"), root)
+    plan["approval"] = {
+        "status": "approved",
+        "approver_class": "self_authorized_agent",
+    }
+    before = (root / "memory/learnings.md").read_text()
+    eventless_receipt = tx.apply_plan(plan, root)
+    check("event failure does not block approved apply",
+          eventless_receipt["status"] == "complete")
+    check("event failure still applies canonical files",
+          (root / "memory/learnings.md").read_text() != before)
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENT_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    os.environ["CORTEX_PHASE_TIME"] = "2026-07-01T12:00:00Z"
+    os.environ["CORTEX_EVENT_TIME"] = "2026-07-01T12:00:00Z"
+    os.environ["CORTEX_PHASE_LEASE_SECONDS"] = "30"
+    owner = "11111111111111111111111111111111"
+    phase_process = subprocess.run(
+        [
+            str(PHASE_TOOL), "start",
+            "--lane-id", "transaction-lane",
+            "--owner-id", owner,
+            "--phase", "sleep",
+            "--skill", "consolidate",
+            "--trigger", "operator_request",
+            "--origin", "runtime",
+            "--requirement", "required",
+            "--enforcement", "operator_invoked",
+            "--effect", "memory_write",
+        ],
+        env=dict(os.environ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    phase = json.loads(phase_process.stdout)
+    context = {
+        "receipt_id": phase["receipt_id"],
+    }
+    _, mismatch_reason = tx._resolved_phase_context({
+        "receipt_id": phase["receipt_id"],
+        "phase_instance_id": "9" * 32,
+    }, root)
+    check("receipt context rejects mismatched supplied phase identity",
+          mismatch_reason == "phase_context_mismatch")
+    unavailable = tx._mechanism_attributes(
+        "tx-unavailable", mismatch_reason
+    )
+    check("failed phase resolution remains explicit on mechanism events",
+          unavailable == {
+              "transaction_id": "tx-unavailable",
+              "correlation": "unavailable",
+              "phase_correlation_reason": "phase_context_mismatch",
+          })
+    plan, _ = tx.prepare_plan(draft(root, "tx-phase-effect"), root)
+    plan["approval"] = {
+        "status": "approved",
+        "approver_class": "self_authorized_agent",
+    }
+    receipt = tx.apply_plan(plan, root, phase_context=context)
+    phase_events = [
+        json.loads(line)
+        for line in (root / ".cortex/events.jsonl").read_text().splitlines()
+    ]
+    effects = [
+        event for event in phase_events
+        if event["event_type"] == "phase.effect_committed"
+    ]
+    check("completed receipt emits exact transaction effects",
+          receipt["status"] == "complete" and
+          {event["attributes"]["effect"] for event in effects} ==
+          {"memory_write", "intake_transition"} and
+          all(event["attributes"]["phase_instance_id"] ==
+              phase["phase_instance_id"] for event in effects) and
+          phase["receipt_id"] not in json.dumps(phase_events))
+    check("transaction effects parent the exact phase invocation",
+          all(event["parent_run_id"] == phase["phase_start_run_id"]
+              for event in effects))
+    check("transaction effect follows durable completed receipt",
+          (root / ".cortex/transactions/tx-phase-effect.json").exists() and
+          json.loads(
+              (root / ".cortex/transactions/tx-phase-effect.json")
+              .read_text()
+          )["status"] == "complete" and
+          min(phase_events.index(event) for event in effects) >
+          max(
+              index for index, event in enumerate(phase_events)
+              if event["event_type"] == "consolidation.apply_completed"
+          ))
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENT_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    plan, _ = tx.prepare_plan(draft(root, "tx-unavailable-context"), root)
+    plan["approval"] = {
+        "status": "approved",
+        "approver_class": "self_authorized_agent",
+    }
+    receipt = tx.apply_plan(
+        plan,
+        root,
+        phase_context={"phase_receipt_id": "9" * 32},
+    )
+    mechanism_events = [
+        json.loads(line)
+        for line in (root / ".cortex/events.jsonl").read_text().splitlines()
+        if '"consolidation.apply_' in line
+    ]
+    check("unresolved phase context stays explicit on apply events",
+          receipt["status"] == "complete" and mechanism_events and
+          all(
+              event["attributes"]["correlation"] == "unavailable"
+              and event["attributes"]["phase_correlation_reason"] ==
+              "phase_owner_receipt_not_found"
+              for event in mechanism_events
+          ))
+    for name in (
+        "CORTEX_EVENT_REPO_ROOT",
+        "CORTEX_EVENTS_FILE",
+    ):
+        os.environ.pop(name, None)
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENT_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    os.environ["CORTEX_PHASE_TIME"] = "2026-07-01T12:00:00Z"
+    os.environ["CORTEX_EVENT_TIME"] = "2026-07-01T12:00:00Z"
+    os.environ["CORTEX_PHASE_LEASE_SECONDS"] = "30"
+    owner = "22222222222222222222222222222222"
+    phase_process = subprocess.run(
+        [
+            str(PHASE_TOOL), "start",
+            "--lane-id", "partial-effect-lane",
+            "--owner-id", owner,
+            "--phase", "sleep",
+            "--skill", "consolidate",
+            "--trigger", "operator_request",
+        ],
+        env=dict(os.environ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    phase = json.loads(phase_process.stdout)
+    context = {
+        "phase_instance_id": phase["phase_instance_id"],
+        "phase_start_run_id": phase["phase_start_run_id"],
+        "phase": "sleep",
+        "skill": "consolidate",
+        "phase_lane_id": "partial-effect-lane",
+        "phase_owner_id": owner,
+    }
+    plan, _ = tx.prepare_plan(draft(root, "tx-no-partial-effect"), root)
+    plan["approval"] = {
+        "status": "approved",
+        "approver_class": "self_authorized_agent",
+    }
+    partial = tx.apply_plan(
+        plan, root, fail_after=1, phase_context=context
+    )
+    partial_events = [
+        json.loads(line)
+        for line in (root / ".cortex/events.jsonl").read_text().splitlines()
+    ]
+    event_names = [event["event_type"] for event in partial_events]
+    check("partial transaction emits no committed phase effect",
+          partial["status"] == "partial" and
+          "phase.effect_committed" not in event_names)
+    check("raw harness phase context remains exactly correlated",
+          any(
+              event["event_type"] == "consolidation.apply_started"
+              and event["attributes"]["phase_instance_id"] ==
+              phase["phase_instance_id"]
+              for event in partial_events
+          ))
+    for name in (
+        "CORTEX_EVENT_REPO_ROOT",
+        "CORTEX_PHASE_TIME",
+        "CORTEX_EVENT_TIME",
+        "CORTEX_PHASE_LEASE_SECONDS",
+    ):
+        os.environ.pop(name, None)
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENT_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    os.environ["CORTEX_PHASE_TIME"] = "2026-07-01T12:00:00Z"
+    os.environ["CORTEX_EVENT_TIME"] = "2026-07-01T12:00:00Z"
+    os.environ["CORTEX_PHASE_LEASE_SECONDS"] = "30"
+    owner = "33333333333333333333333333333333"
+    phase_process = subprocess.run(
+        [
+            str(PHASE_TOOL), "start",
+            "--lane-id", "environment-effect-lane",
+            "--owner-id", owner,
+            "--phase", "sleep",
+            "--skill", "consolidate",
+            "--trigger", "operator_request",
+        ],
+        env=dict(os.environ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    phase = json.loads(phase_process.stdout)
+    os.environ["CORTEX_PHASE_RECEIPT_ID"] = phase["receipt_id"]
+    plan, _ = tx.prepare_plan(draft(root, "tx-environment-effect"), root)
+    plan["approval"] = {
+        "status": "approved",
+        "approver_class": "self_authorized_agent",
+    }
+    receipt = tx.apply_plan(plan, root)
+    phase_events = [
+        json.loads(line)
+        for line in (root / ".cortex/events.jsonl").read_text().splitlines()
+    ]
+    effects = [
+        event for event in phase_events
+        if event["event_type"] == "phase.effect_committed"
+    ]
+    check("transaction resolves exact phase from receipt environment",
+          receipt["status"] == "complete" and len(effects) == 2 and
+          all(event["attributes"]["phase_instance_id"] ==
+              phase["phase_instance_id"] for event in effects))
+    subprocess.run(
+        [
+            str(PHASE_TOOL), "complete",
+            "--receipt-id", phase["receipt_id"],
+            "--status", "ok",
+        ],
+        env=dict(os.environ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    _, inactive_reason = tx._resolved_phase_context(
+        {"receipt_id": phase["receipt_id"]}, root
+    )
+    check("transaction receipt resolution rejects no active phase",
+          inactive_reason == "active_phase_not_found")
+    for name in (
+        "CORTEX_EVENT_REPO_ROOT",
+        "CORTEX_PHASE_TIME",
+        "CORTEX_EVENT_TIME",
+        "CORTEX_PHASE_LEASE_SECONDS",
+        "CORTEX_PHASE_RECEIPT_ID",
+    ):
+        os.environ.pop(name, None)
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    plan, _ = tx.prepare_plan(draft(root, "tx-symlink-parent"), root)
+    plan["approval"] = {
+        "status": "approved",
+        "approver_class": "self_authorized_agent",
+    }
+    outside = root / "outside-state"
+    outside.mkdir()
+    (root / ".cortex").symlink_to(outside, target_is_directory=True)
+    old_events = os.environ.get("CORTEX_EVENTS")
+    os.environ["CORTEX_EVENTS"] = "off"
+    before = (root / "memory/learnings.md").read_text()
+    try:
+        expect_error(
+            "symlinked transaction state parent is rejected",
+            "path_parent_invalid",
+            lambda: tx.apply_plan(plan, root),
+        )
+    finally:
+        if old_events is None:
+            os.environ.pop("CORTEX_EVENTS", None)
+        else:
+            os.environ["CORTEX_EVENTS"] = old_events
+    check("symlinked receipt parent leaves canonical files unchanged",
+          (root / "memory/learnings.md").read_text() == before)
+    check("symlinked receipt parent receives no receipt",
+          not any(outside.iterdir()))
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    plan, _ = tx.prepare_plan(draft(root, "tx-receipt-retry"), root)
+    plan["approval"] = {
+        "status": "approved",
+        "approver_class": "self_authorized_agent",
+    }
+    original_write = tx._write_receipt
+    writes = 0
+
+    def fail_second_write(receipt_root, transaction_id, receipt):
+        global writes
+        writes += 1
+        if writes == 2:
+            tx.fail("receipt_write_failed")
+        original_write(receipt_root, transaction_id, receipt)
+
+    tx._write_receipt = fail_second_write
+    try:
+        receipt = tx.apply_plan(plan, root)
+    finally:
+        tx._write_receipt = original_write
+    check("receipt failure after replacement records recoverable partial state",
+          receipt["status"] == "partial" and
+          receipt["reason_code"] == "receipt_write_failed")
+    persisted = json.loads(
+        tx.receipt_path(root, plan["transaction_id"]).read_text()
+    )
+    check("retried receipt persists the applied target before returning",
+          persisted["status"] == "partial" and
+          persisted["targets"][0]["status"] == "applied")
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    replacement = BASE_RECORD.replace(
+        "Existing base lesson.",
+        "Updated base lesson remains independently retrievable.",
+    )
+    replace_plan = {
+        "schema": tx.PLAN_SCHEMA,
+        "transaction_id": "tx-replace",
+        "created_at": "2026-07-01T12:00:00Z",
+        "proposer": "model",
+        "origin": "episode:demo",
+        "run_kind": "on_demand",
+        "candidate_refs": ["memory/learnings.md::base"],
+        "evidence_refs": ["workspace/demo/episode.md"],
+        "approval": {
+            "status": "approved",
+            "approver_class": "self_authorized_agent",
+        },
+        "operations": [{
+            "index": 0,
+            "op": "replace_record",
+            "target": "memory/learnings.md",
+            "ref": "memory/learnings.md::base",
+            "record": replacement,
+        }],
+    }
+    prepared, _ = tx.prepare_plan(replace_plan, root)
+    receipt = tx.apply_plan(prepared, root)
+    check("replace-record preserves key and applies exact replacement",
+          receipt["status"] == "complete" and
+          "Updated base lesson" in
+          (root / "memory/learnings.md").read_text())
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    line = fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    candidate = tx.intake_ref("workspace/demo/intake.md", line)
+    reject_plan = {
+        "schema": tx.PLAN_SCHEMA,
+        "transaction_id": "tx-reject",
+        "created_at": "2026-07-01T12:00:00Z",
+        "proposer": "model",
+        "origin": "episode:demo",
+        "run_kind": "on_demand",
+        "candidate_refs": [candidate],
+        "evidence_refs": ["workspace/demo/episode.md"],
+        "approval": {
+            "status": "approved",
+            "approver_class": "self_authorized_agent",
+        },
+        "operations": [{
+            "index": 0,
+            "op": "intake_status",
+            "target": "workspace/demo/intake.md",
+            "candidate_ref": candidate,
+            "from": "open",
+            "to": "rejected",
+            "reason": "Transient fixture with no durable lesson.",
+        }],
+    }
+    prepared, _ = tx.prepare_plan(reject_plan, root)
+    tx.apply_plan(prepared, root)
+    intake = (root / "workspace/demo/intake.md").read_text()
+    check("rejected intake remains as a reasoned tombstone",
+          "status: rejected" in intake and "reason: Transient fixture" in intake)
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    fixture(root)
+    os.environ["CORTEX_REPO_ROOT"] = str(root)
+    os.environ["CORTEX_EVENTS_FILE"] = ".cortex/events.jsonl"
+    legacy = BASE_RECORD.replace(
+        "Existing base lesson.",
+        "Existing base lesson; legacy rationale.",
+    )
+    (root / "memory/learnings.md").write_text("# Learnings\n\n" + legacy)
+    plan, _ = tx.prepare_plan(draft(root, "tx-legacy-baseline"), root)
+    check("unchanged legacy atomicity does not block valid operations",
+          plan["targets"][0]["path"] == "memory/learnings.md")
+
+    invalid_replacement = copy.deepcopy(plan)
+    invalid_replacement.pop("targets")
+    invalid_replacement["transaction_id"] = "tx-legacy-invalid-replacement"
+    invalid_replacement["operations"] = [{
+        "index": 0,
+        "op": "replace_record",
+        "target": "memory/learnings.md",
+        "ref": "memory/learnings.md::base",
+        "record": legacy,
+    }]
+    invalid_replacement["candidate_refs"] = ["memory/learnings.md::base"]
+    expect_error(
+        "changed legacy record must satisfy current atomicity",
+        "insight_not_atomic",
+        lambda: tx.prepare_plan(invalid_replacement, root),
+    )
+
+    legacy_tags = BASE_RECORD.replace(
+        "tags:     base, fixture, transaction",
+        "tags:     base, fixture, transaction, four, five, six, seven, eight, nine",
+    )
+    (root / "memory/learnings.md").write_text(
+        "# Learnings\n\n" + legacy_tags
+    )
+    tag_plan, _ = tx.prepare_plan(draft(root, "tx-legacy-tags"), root)
+    check("unchanged legacy tag count does not block valid operations",
+          tag_plan["targets"][0]["path"] == "memory/learnings.md")
+
+    invalid_tag_replacement = copy.deepcopy(invalid_replacement)
+    invalid_tag_replacement["transaction_id"] = "tx-legacy-invalid-tags"
+    invalid_tag_replacement["operations"][0]["record"] = legacy_tags
+    expect_error(
+        "changed legacy record must satisfy current tag count",
+        "tags_invalid",
+        lambda: tx.prepare_plan(invalid_tag_replacement, root),
+    )
+
+print(f"\n{passed} passed, {failed} failed")
+sys.exit(1 if failed else 0)

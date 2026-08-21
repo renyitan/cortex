@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use Cortex as a design or implementation reference, please cite this software."
+title: "Cortex: a cognition framework for long-running agents"
+type: software
+authors:
+  - family-names: "Tan"
+    given-names: "Renyi"
+version: "0.33.0"
+date-released: 2026-08-20
+repository-code: "https://github.com/renyitan/cortex"
+license: MIT
+abstract: >-
+  Cortex is a cognition plugin for long-running agents. It keeps canonical memory and work as
+  operator-owned Markdown, derives removable local projections for retrieval and observability,
+  and records explicit boundaries between host-enforced behavior and model-owned cognition.
+keywords:
+  - "agent memory"
+  - "context management"
+  - "cognition framework"
+  - "GitHub Copilot CLI"

@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# test-capture-check — deterministic regression test for the Stop-hook intake gate
+# (plugins/cortex/bin/cortex-capture-check), which watches the intake buffer on two axes:
+# CAPTURE staleness and DRAIN debt. This is cortex dev machinery (not shipped); it asserts the
+# detector logic — the part where bugs live — by feeding the hook crafted on-disk states and
+# checking which nudge (if any) it emits. Behavioral "does a cold agent actually drain when nudged"
+# is a separate tier-2 cold-boot eval (faber-side toybed), not this.
+#
+# Usage: tests/test-capture-check          (exit 0 = all pass, 1 = a case failed)
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HOOK="$ROOT/plugins/cortex/bin/cortex-capture-check"
+TODAY="$(date +%Y-%m-%d)"
+OLD="$(date -v-3d +%Y-%m-%d 2>/dev/null || date -d '3 days ago' +%Y-%m-%d)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+pass=0; fail=0
+# nudge <sid> <project> -> prints "drain" | "capture" | "" (none)
+nudge() {
+  printf '{"sessionId":"%s","cwd":"%s"}' "$1" "$2" | "$HOOK" 2>/dev/null \
+    | grep -oE '"reason":"(Drain|Capture) check' | sed -E 's/.*"(Drain|Capture).*/\1/' \
+    | tr 'A-Z' 'a-z'
+}
+mkproj() { # mkproj <dir> [intake-lines...] ; creates a track + optional intake.md
+  local d="$1"; shift
+  rm -rf "$d"; mkdir -p "$d/workspace/t"; echo '# track' > "$d/workspace/t/track.md"
+  if [ "$#" -gt 0 ]; then { printf '# intake\n'; printf '%s\n' "$@"; } > "$d/workspace/t/intake.md"; fi
+}
+check() { # check <label> <expected> <got>
+  if [ "$2" = "$3" ]; then pass=$((pass+1)); printf '  ✓ %s\n' "$1"
+  else fail=$((fail+1)); printf '  ✗ %s — expected [%s] got [%s]\n' "$1" "$2" "$3"; fi
+}
+
+note() { printf -- '- captured: %s  status: open  note: %s  episode: -' "$1" "$2"; }
+dnote() { printf -- '- captured: %s  status: drained  note: %s  derives-to: k' "$1" "$2"; }
+
+echo "DRAIN axis (single-turn, fresh session each):"
+P="$TMP/a"
+mkproj "$P";                                   check "no track/empty buffer → none"      ""       "$(nudge s1 "$P")"
+mkproj "$P" "$(note "$TODAY" x1)" "$(note "$TODAY" x2)" "$(note "$TODAY" x3)" "$(note "$TODAY" x4)" "$(note "$TODAY" x5)" "$(note "$TODAY" x6)"
+                                               check "6 open notes → drain (count)"       "drain"  "$(nudge s2 "$P")"
+mkproj "$P" "$(note "$TODAY" only)";           check "1 fresh open note → none"            ""       "$(nudge s3 "$P")"
+mkproj "$P" "$(note "$OLD" stale)";            check "1 old open note (≥1d) → drain (age)" "drain"  "$(nudge s4 "$P")"
+mkproj "$P" "$(dnote "$TODAY" d1)" "$(dnote "$TODAY" d2)" "$(dnote "$TODAY" d3)" "$(dnote "$TODAY" d4)" "$(dnote "$TODAY" d5)" "$(dnote "$TODAY" d6)"
+                                               check "6 DRAINED notes → none"             ""       "$(nudge s5 "$P")"
+mkproj "$P" '(`status: open → proposed → accepted | rejected → drained`), never delete.'
+                                               check "schema-doc decoy line → none"       ""       "$(nudge s6 "$P")"
+mkproj "$TMP/notrk"; rm -f "$TMP/notrk/workspace/t/track.md"; rmdir "$TMP/notrk/workspace/t" 2>/dev/null
+                                               check "no tracked work → none (eligibility)" ""     "$(nudge s7 "$TMP/notrk")"
+
+echo "CAPTURE axis (multi-turn, threshold 3, empty buffer):"
+export CORTEX_CAPTURE_NUDGE_TURNS=3
+P="$TMP/b"; mkproj "$P"; printf '# intake\n' > "$P/workspace/t/intake.md"
+r=""; for n in 1 2 3; do r="$(nudge capb "$P")"; done
+check "capture silence reaches 3 → capture" "capture" "$r"
+
+echo "PRIORITY (full buffer + capture silence → drain only, capture suppressed):"
+export CORTEX_DRAIN_COOLDOWN_TURNS=2
+P="$TMP/c"; mkproj "$P" "$(note "$TODAY" n1)" "$(note "$TODAY" n2)" "$(note "$TODAY" n3)" "$(note "$TODAY" n4)" "$(note "$TODAY" n5)" "$(note "$TODAY" n6)"
+t1="$(nudge capc "$P")"; t2="$(nudge capc "$P")"; t3="$(nudge capc "$P")"; t4="$(nudge capc "$P")"
+check "turn1 → drain"                 "drain" "$t1"
+check "turn2 → none (cooldown)"       ""      "$t2"
+check "turn3 → none (capture suppressed under debt)" "" "$t3"
+check "turn4 → drain (cooldown elapsed)" "drain" "$t4"
+unset CORTEX_CAPTURE_NUDGE_TURNS CORTEX_DRAIN_COOLDOWN_TURNS
+
+echo "EFFECTIVENESS LOG (multi-turn, did the nudge lead to draining?):"
+logoutcome() { tail -1 "$1/.cortex/drain-effectiveness.log" 2>/dev/null | grep -oE 'outcome=[a-z]+' | sed 's/outcome=//'; }
+# build a track + a 6-note intake buffer directly (status open|drained), no word-splitting
+mkbuf() { # mkbuf <dir> <status> <date>  — (re)writes only the intake buffer; preserves .cortex state
+  local d="$1" st="$2" dt="$3" i
+  mkdir -p "$d/workspace/t"; echo '# track' > "$d/workspace/t/track.md"
+  { echo '# intake'
+    for i in 1 2 3 4 5 6; do
+      if [ "$st" = open ]; then printf -- '- captured: %s  status: open  note: n%s  episode: -\n' "$dt" "$i"
+      else printf -- '- captured: %s  status: drained  note: n%s  derives-to: k\n' "$dt" "$i"; fi
+    done; } > "$d/workspace/t/intake.md"
+}
+
+export CORTEX_DRAIN_COOLDOWN_TURNS=2
+# FOLLOWED: nudge fires on a full buffer, then the notes get drained → next turn logs "followed"
+P="$TMP/d"; mkbuf "$P" open "$TODAY"
+nudge effd "$P" >/dev/null                 # turn1: drain nudge fires, arms nudge_open=6
+mkbuf "$P" drained "$TODAY"                # but keep .cortex state (mkbuf only rewrites workspace)
+nudge effd "$P" >/dev/null                 # turn2: open=0 < 6 → followed
+check "nudge then drained → logged followed" "followed" "$(logoutcome "$P")"
+
+# IGNORED: nudge fires, notes left untouched past the resolve window → logs "ignored"
+export CORTEX_DRAIN_RESOLVE_TURNS=2
+P="$TMP/e"; mkbuf "$P" open "$TODAY"
+nudge effe "$P" >/dev/null                 # turn1: arms
+nudge effe "$P" >/dev/null                 # turn2: wait=1
+nudge effe "$P" >/dev/null                 # turn3: wait=2 ≥ window → ignored
+check "nudge then notes left → logged ignored" "ignored" "$(logoutcome "$P")"
+
+# A fresh session must NOT inherit a pending nudge (no spurious outcome on first turn)
+P="$TMP/f"; mkbuf "$P" open "$TODAY"
+nudge efff "$P" >/dev/null                 # turn1 of session efff: arms, no resolve
+check "first turn of a session logs nothing" "" "$(logoutcome "$P")"
+unset CORTEX_DRAIN_COOLDOWN_TURNS CORTEX_DRAIN_RESOLVE_TURNS
+
+echo
+echo "RESULT: $pass passed, $fail failed"
+[ "$fail" -eq 0 ]

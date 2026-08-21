@@ -1,0 +1,16 @@
+{
+  "name": "cortex",
+  "version": "0.33.0",
+  "description": "Cortex is a cognition framework for long-running agents. It provides WAKE, WORK, SLEEP, and CURATE procedures; operator-owned Markdown memory; and a verified GitHub Copilot CLI adapter with local retrieval and transaction tools.",
+  "author": {
+    "name": "cortex",
+    "url": "https://github.com/renyitan/cortex"
+  },
+  "homepage": "https://github.com/renyitan/cortex",
+  "repository": "https://github.com/renyitan/cortex",
+  "license": "MIT",
+  "keywords": ["cognition", "memory", "agent-substrate", "long-running-agent", "self-owned"],
+  "category": "Productivity",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json"
+}

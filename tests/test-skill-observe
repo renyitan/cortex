@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TOOL="$ROOT/plugins/cortex/tools/cognition-skill-observe"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+mkdir -p "$TMP/repo/.git"
+export COPILOT_PROJECT_DIR="$TMP/repo"
+export CORTEX_EVENT_REPO_ROOT="$TMP/repo"
+export CORTEX_EVENT_TIME="2026-08-09T12:00:00Z"
+
+payload='{"sessionId":"session-1","timestamp":1,"cwd":"/redacted","toolName":"skill","toolArgs":{"skill":"recall"},"toolResult":{"resultType":"success","textResultForLlm":"private result"}}'
+printf '%s' "$payload" | "$TOOL"
+string_args='{"sessionId":"session-2","timestamp":2,"cwd":"/redacted","toolName":"skill","toolArgs":"{\"skill\":\"curate\"}","toolResult":{"resultType":"success","textResultForLlm":"private result","durationMs":12}}'
+printf '%s' "$string_args" | "$TOOL"
+
+python3 - "$TMP/repo/.cortex/cognition-events.jsonl" "$ROOT/plugins/cortex/tools" <<'PY'
+import json
+import hashlib
+import sys
+
+sys.path.insert(0, sys.argv[2])
+from cognition_phase import session_identity
+
+events = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]
+assert len(events) == 2, events
+event = events[0]
+assert event["event_type"] == "skill.loaded"
+assert event["status"] == "observed"
+assert event["component"] == "phase"
+assert event["attributes"]["skill"] == "recall"
+assert event["attributes"]["correlation"] == "unavailable"
+lane_id, _ = session_identity("session-1")
+assert event["attributes"]["lane_id_hash"] == hashlib.sha256(
+    lane_id.encode("utf-8")
+).hexdigest()
+serialized = json.dumps(event)
+assert "private result" not in serialized
+assert "session-1" not in serialized
+assert "/redacted" not in serialized
+assert events[1]["attributes"]["skill"] == "curate"
+assert "session-2" not in json.dumps(events[1])
+PY
+
+before="$(wc -l < "$TMP/repo/.cortex/cognition-events.jsonl")"
+for bad in \
+  'not-json' \
+  '{"sessionId":"session-1","timestamp":1,"cwd":"/x","toolName":"bash","toolArgs":{"skill":"recall"},"toolResult":{"resultType":"success","textResultForLlm":"x"}}' \
+  '{"sessionId":"session-1","timestamp":1,"cwd":"/x","toolName":"skill","toolArgs":{"skill":"encode"},"toolResult":{"resultType":"success","textResultForLlm":"x"}}' \
+  '{"sessionId":"session-1","timestamp":1,"cwd":"/x","toolName":"skill","toolArgs":{"skill":"recall","private":"x"},"toolResult":{"resultType":"success","textResultForLlm":"x"}}'
+do
+  printf '%s' "$bad" | "$TOOL"
+done
+after="$(wc -l < "$TMP/repo/.cortex/cognition-events.jsonl")"
+[ "$before" = "$after" ]
+
+printf 'skill observation tests passed\n'

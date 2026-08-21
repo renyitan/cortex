@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""Prepare, validate, preview, apply, and reconcile consolidation plans."""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import consolidation_transaction as tx
+
+
+def emit_json(value) -> None:
+    print(json.dumps(value, indent=2, sort_keys=True))
+
+
+def contained_relative(value: str, directory: str) -> str:
+    path = Path(value)
+    if path.is_absolute() or "\\" in value or ".." in path.parts:
+        tx.fail("operational_path_outside_cortex")
+    normalized = "/".join(path.parts)
+    if not normalized.startswith(directory.rstrip("/") + "/"):
+        tx.fail("operational_path_outside_cortex")
+    return normalized
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="consolidate-transaction")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    inspect = subparsers.add_parser("inspect-intake")
+    inspect.add_argument("path")
+    inspect.add_argument("--json", action="store_true")
+
+    prepare = subparsers.add_parser("prepare")
+    prepare.add_argument("plan")
+    prepare.add_argument("--output", required=True)
+
+    validate = subparsers.add_parser("validate")
+    validate.add_argument("plan")
+    validate.add_argument("--json", action="store_true")
+
+    preview = subparsers.add_parser("preview")
+    preview.add_argument("plan")
+
+    apply = subparsers.add_parser("apply")
+    apply.add_argument("plan")
+    apply.add_argument("--json", action="store_true")
+    apply.add_argument("--phase-instance-id")
+    apply.add_argument("--phase-start-run-id")
+    apply.add_argument("--phase")
+    apply.add_argument("--skill")
+    apply.add_argument("--phase-lane-id")
+    apply.add_argument("--phase-owner-id")
+    apply.add_argument("--phase-receipt-id")
+
+    reconcile = subparsers.add_parser("reconcile")
+    reconcile.add_argument("receipt")
+    reconcile.add_argument("--json", action="store_true")
+
+    args = parser.parse_args(argv)
+    root = tx.repo_root()
+    try:
+        if args.command == "inspect-intake":
+            candidates = tx.inspect_intake(root, args.path)
+            if args.json:
+                emit_json({
+                    "schema": "cortex.consolidation-candidates/v1",
+                    "candidates": candidates,
+                })
+            else:
+                for candidate in candidates:
+                    print(
+                        f"{candidate['ref']}  line={candidate['line']} "
+                        f"status={candidate['status']}"
+                    )
+            return 0
+
+        if args.command == "prepare":
+            plan_path = contained_relative(
+                args.plan, ".cortex/consolidation"
+            )
+            output = contained_relative(
+                args.output, ".cortex/consolidation"
+            )
+            plan = tx.load_plan_relative(root, plan_path)
+            prepared, _ = tx.prepare_plan(plan, root)
+            tx.write_operational_json(root, output, prepared)
+            print(f"prepared {output}")
+            return 0
+
+        if args.command == "validate":
+            plan = tx.load_plan_relative(root, contained_relative(
+                args.plan, ".cortex/consolidation"
+            ))
+            _, _, states = tx.evaluate_prepared(plan, root)
+            digest = tx.plan_hash(plan)
+            tx.emit_event(
+                "consolidation.plan_validated",
+                "ok",
+                hashes={"plan_sha256": digest},
+                counts={"targets": len(states), "operations": len(plan["operations"])},
+                attributes={"transaction_id": plan["transaction_id"]},
+            )
+            result = {
+                "schema": "cortex.consolidation-validation/v1",
+                "status": "ok",
+                "plan_sha256": digest,
+                "targets": states,
+            }
+            emit_json(result) if args.json else print(
+                f"valid {plan['transaction_id']} {digest}"
+            )
+            return 0
+
+        if args.command == "preview":
+            plan = tx.load_plan_relative(root, contained_relative(
+                args.plan, ".cortex/consolidation"
+            ))
+            sys.stdout.write(tx.preview_plan(plan, root))
+            return 0
+
+        if args.command == "apply":
+            plan = tx.load_plan_relative(root, contained_relative(
+                args.plan, ".cortex/consolidation"
+            ))
+            phase_context = {
+                "phase_instance_id": args.phase_instance_id,
+                "phase_start_run_id": args.phase_start_run_id,
+                "phase": args.phase,
+                "skill": args.skill,
+                "phase_lane_id": args.phase_lane_id,
+                "phase_owner_id": args.phase_owner_id,
+                "phase_receipt_id": args.phase_receipt_id,
+            }
+            receipt = tx.apply_plan(
+                plan,
+                root,
+                phase_context=(
+                    phase_context
+                    if any(phase_context.values())
+                    else None
+                ),
+            )
+            emit_json(receipt) if args.json else print(
+                f"{receipt['status']} {receipt['transaction_id']}"
+            )
+            return 0 if receipt["status"] == "complete" else 5
+
+        receipt_relative = contained_relative(
+            args.receipt, ".cortex/transactions"
+        )
+        receipt = tx.reconcile_receipt(Path(receipt_relative), root)
+        emit_json(receipt) if args.json else print(
+            f"{receipt['reconciliation']['status']} "
+            f"{receipt['transaction_id']}"
+        )
+        return 6 if receipt["reconciliation"]["status"] == "conflict" else 0
+    except tx.TransactionError as exc:
+        if args.command in {"validate", "prepare", "preview", "apply"}:
+            try:
+                plan = tx.load_plan_relative(root, contained_relative(
+                    args.plan, ".cortex/consolidation"
+                ))
+                tx.failure_receipt(plan, root, exc.code)
+                digest = tx.plan_hash(plan)
+                tx.emit_event(
+                    "consolidation.plan_rejected",
+                    "rejected",
+                    reason_code=exc.code,
+                    hashes={"plan_sha256": digest},
+                )
+            except tx.TransactionError:
+                pass
+        print(
+            f"consolidate-transaction: rejected (reason: {exc.code})",
+            file=sys.stderr,
+        )
+        return 4
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

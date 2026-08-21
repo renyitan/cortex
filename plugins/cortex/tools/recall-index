@@ -1,0 +1,1340 @@
+#!/usr/bin/env python3
+"""recall-index — the rung-2/3 retrieval index behind `recall`.
+
+A rebuildable, removable SQLite sidecar over cortex's canonical markdown memory
+(`memory/learnings.md`, `memory/decisions.md`). The markdown is always the source
+of truth; this index is a projection that can be deleted and rebuilt at any time.
+It degrades gracefully: rung-3 (BM25 ⊕ local embeddings, fused via weighted RRF) →
+rung-2 (FTS5/BM25, stdlib-only) → rung-1 (plain grep) as deps/files drop away.
+
+Rung-3 (dense) is import-guarded — model2vec + numpy. Without them the tool is a
+pure-stdlib rung-2 BM25 index. Default model: minishlab/potion-retrieval-32M
+(numpy-only static embeddings, ~5MB). Override with CORTEX_EMBED_MODEL; disable
+the dense layer with CORTEX_EMBED_DISABLE=1.
+
+  recall-index rebuild [--force]     build/refresh the index from the markdown
+  recall-index ensure [--json]       create/refresh locally; never download
+  recall-index search "<terms>"      ranked refs; supports --scope and --json
+  recall-index query "<terms>"       backward-compatible alias for search
+  recall-index fetch "<ref>"         fetch one exact canonical record
+  recall-index expand "<ref>..."     traverse memory links by one or two hops
+  recall-index status                show index health + bloat metrics
+  recall-index audit [-n N]          list non-atomic records (densest first)
+  recall-index eval [golden.json]    run the golden-set retrieval eval
+
+Design notes live in workspace/cortex-substrate/ (memory-atomicity-prune-index/
+and recall-nerve-semantic-retrieval/). The index file (cortex-index.db) is
+git-ignored — never committed, never canonical.
+"""
+from __future__ import annotations
+import sys, os, re, sqlite3, hashlib, time, json, subprocess, uuid, fcntl
+from contextlib import contextmanager
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from cognition_event import emit_event
+except ImportError:
+    emit_event = None
+
+SCHEMA_VERSION = 3
+DB_NAME = "cortex-index.db"
+SOURCES = ("learnings", "decisions")
+SOURCE_PATHS = {s: f"memory/{s}.md" for s in SOURCES}
+
+# ── rung-3: local embedding backend (import-guarded, pluggable, removable) ────
+# Two backends, auto-selected by which lib is installed (model2vec preferred for
+# its lighter footprint). Both are import-guarded: absent → search degrades to
+# rung-2 BM25. Disable explicitly with CORTEX_EMBED_DISABLE=1.
+#   - model2vec (default): minishlab/potion-retrieval-32M — numpy-only, ~5MB,
+#     no torch/onnx. The lightest viable; partial vocab-mismatch coverage.
+#   - fastembed (step-up): BAAI/bge-small-en-v1.5 — onnxruntime (~150MB), 384-dim
+#     (smaller vectors = growth-friendly), measured best on vocab-mismatch recall.
+# Override the model with CORTEX_EMBED_MODEL; force a backend with
+# CORTEX_EMBED_BACKEND=model2vec|fastembed.
+DEFAULT_MODELS = {"model2vec": "minishlab/potion-retrieval-32M",
+                  "fastembed": "BAAI/bge-small-en-v1.5"}
+DENSE_RRF_WEIGHT = 1.0   # measured: with working BM25, equal-weight RRF is best —
+BM25_RRF_WEIGHT = 1.0    # BM25 + dense are complementary (BM25 nails stems, dense
+                         # nails paraphrase); fusion wins on vocab-mismatch, ties easy.
+RRF_K = 60               # standard Reciprocal Rank Fusion constant
+CANDIDATE_POOL = 50      # per-ranker depth fed into fusion
+
+_EMBED_CACHE = {
+    "offline_tried": False,
+    "download_tried": False,
+    "model": None,
+    "name": None,
+}
+
+def _select_backend() -> str | None:
+    """Pick an installed embedding backend (forced via CORTEX_EMBED_BACKEND)."""
+    forced = os.environ.get("CORTEX_EMBED_BACKEND")
+    order = [forced] if forced else ["model2vec", "fastembed"]
+    for b in order:
+        try:
+            __import__(b)
+            return b
+        except Exception:
+            continue
+    return None
+
+def embed_model_name(backend: str | None = None) -> str:
+    env = os.environ.get("CORTEX_EMBED_MODEL")
+    if env:
+        return env
+    return DEFAULT_MODELS.get(backend or "model2vec", DEFAULT_MODELS["model2vec"])
+
+def embed_backend(allow_download: bool = False):
+    """Lazily load the embedding model. Returns encode(list[str]) -> 2D float32
+    ndarray, or None if the dense layer is disabled or its deps are unavailable
+    (caller falls back to BM25). Search never permits a model download; only an
+    explicit rebuild may populate a missing local model cache."""
+    if os.environ.get("CORTEX_EMBED_DISABLE"):
+        return None
+    if _EMBED_CACHE["model"] is not None:
+        return _EMBED_CACHE["model"]
+    tried_key = "download_tried" if allow_download else "offline_tried"
+    if _EMBED_CACHE[tried_key]:
+        return None
+    _EMBED_CACHE[tried_key] = True
+    backend = _select_backend()
+    if backend is None:
+        return None
+    name = embed_model_name(backend)
+    offline_before = {
+        key: os.environ.get(key)
+        for key in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+    }
+    if not allow_download:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    try:
+        import numpy as np
+        if backend == "model2vec":
+            from model2vec import StaticModel
+            m = StaticModel.from_pretrained(name)
+            enc = lambda texts: np.asarray(m.encode(list(texts)), dtype=np.float32)
+        else:  # fastembed
+            from fastembed import TextEmbedding
+            try:
+                m = TextEmbedding(name, local_files_only=not allow_download)
+            except TypeError:
+                m = TextEmbedding(name)
+            enc = lambda texts: np.asarray(list(m.embed(list(texts))), dtype=np.float32)
+        _EMBED_CACHE["model"] = enc
+        _EMBED_CACHE["name"] = f"{name} [{backend}]"
+    except Exception:
+        _EMBED_CACHE["model"] = None
+    finally:
+        if not allow_download:
+            for key, value in offline_before.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+    return _EMBED_CACHE["model"]
+
+def _embed_text(r: dict) -> str:
+    """The dense surface for a record. Mirrors the BM25 columns but flattens the
+    hyphenated key into words so it embeds well (measured to help)."""
+    parts = [r["key"].replace("-", " "), r.get("insight", ""),
+             r.get("tags", ""), r.get("trigger", "")]
+    return ". ".join(p for p in parts if p)
+
+# ── locate the memory dir (repo-relative, like the other tools) ──────────────
+def repo_root() -> Path:
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL)
+        return Path(out.decode().strip())
+    except Exception:
+        return Path.cwd()
+
+def memory_dir() -> Path:
+    # Allow override for tests; default to <repo>/memory
+    env = os.environ.get("CORTEX_MEMORY_DIR")
+    return Path(env) if env else repo_root() / "memory"
+
+def db_path() -> Path:
+    return memory_dir() / DB_NAME
+
+# ── FTS5 capability probe (degrade gracefully if missing) ────────────────────
+def fts5_available() -> bool:
+    try:
+        c = sqlite3.connect(":memory:")
+        c.execute("CREATE VIRTUAL TABLE _p USING fts5(x)")
+        c.close()
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+# ── parse canonical markdown into atomic records ─────────────────────────────
+FIELD_RE = re.compile(
+    r'^(insight|trigger|tags|evidence|source|updated|scope|conf|type|'
+    r'derives-from|see-also|supersedes):\s*(.*)$')
+HEAD_RE = re.compile(r'^### (.+?)\s*$')
+
+def parse_records(path: Path, source: str) -> list[dict]:
+    """Parse a memory store into records. The `### key · type · conf` header
+    line gives the key; following `field:` lines give the body. A record's
+    searchable surface is key+insight+tags+trigger; `raw` keeps the full text
+    for fetch-and-quote."""
+    recs, cur, field = [], None, None
+    if not path.exists():
+        return recs
+    for line in path.read_text().splitlines():
+        h = HEAD_RE.match(line)
+        if h:
+            if cur:
+                recs.append(cur)
+            # key is the first ·-separated token of the header
+            key = h.group(1).split('·')[0].strip()
+            cur = {
+                "source": source,
+                "path": SOURCE_PATHS[source],
+                "key": key,
+                "ref": f"{SOURCE_PATHS[source]}::{key}",
+                "insight": "",
+                "trigger": "",
+                "tags": "",
+                "evidence": "",
+                "scope": "",
+                "derives-from": [],
+                "see-also": [],
+                "raw": line + "\n",
+            }
+            field = None
+            continue
+        if cur is None:
+            continue
+        cur["raw"] += line + "\n"
+        m = FIELD_RE.match(line)
+        if m:
+            field = m.group(1)
+            # only the searchable fields land in cur; the markdown's own
+            # `source:`/`scope:`/etc. must NOT clobber the structural origin.
+            if field in ("insight", "trigger", "tags", "evidence", "scope"):
+                cur[field] = m.group(2)
+            elif field in ("derives-from", "see-also"):
+                cur[field] = [
+                    value.strip()
+                    for value in m.group(2).split(",")
+                    if value.strip()
+                ]
+            if field == "source":
+                scope_match = re.search(r'\bscope:\s*(\S+)', m.group(2))
+                if scope_match:
+                    cur["scope"] = scope_match.group(1)
+        elif field in ("insight", "trigger", "evidence") and line.strip():
+            cur[field] = (cur.get(field, "") + " " + line.strip()).strip()
+    if cur:
+        recs.append(cur)
+    # assign stable seq within source
+    for i, r in enumerate(recs):
+        r["seq"] = i
+    return recs
+
+def all_records() -> list[dict]:
+    md = memory_dir()
+    out = []
+    for src in SOURCES:
+        out += parse_records(md / f"{src}.md", src)
+    return out
+
+def _validate_unique_records(records: list[dict]) -> None:
+    refs = [record["ref"] for record in records]
+    keys = [record["key"] for record in records]
+    if len(refs) != len(set(refs)):
+        raise ValueError("duplicate stable record ref")
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate record key")
+
+# ── schema ───────────────────────────────────────────────────────────────────
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS records (
+    id INTEGER PRIMARY KEY,
+    source TEXT NOT NULL, seq INTEGER NOT NULL,
+    path TEXT NOT NULL, key TEXT NOT NULL, ref TEXT NOT NULL UNIQUE,
+    scope TEXT NOT NULL, insight TEXT, tags TEXT, trigger TEXT,
+    derives_from TEXT NOT NULL, see_also TEXT NOT NULL,
+    raw TEXT NOT NULL, hash TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_records_src_seq ON records(source, seq);
+CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
+    key, insight, tags, trigger,
+    source UNINDEXED, seq UNINDEXED, scope UNINDEXED,
+    content='records', content_rowid='id',
+    tokenize='porter unicode61 remove_diacritics 2'
+);
+CREATE TABLE IF NOT EXISTS vectors (
+    id INTEGER PRIMARY KEY,   -- == records.id
+    vec BLOB NOT NULL          -- packed float32, L2-normalized at query time
+);
+"""
+# BM25 column weights: key 8x, insight 6x, tags 4x, trigger 1x.
+# BM25 column weights: key 8x, insight 6x, tags 4x, trigger 1x. The first arg
+# to bm25() MUST be the fts table name; FTS5 returns more-negative = better, so
+# the ranking subquery orders ascending.
+BM25_RANK = "bm25(records_fts, 8.0, 6.0, 4.0, 1.0)"
+
+def _sha(s: str) -> str:
+    return hashlib.sha256(s.encode()).hexdigest()
+
+def _record_event(event: str, status: str, **fields) -> None:
+    if emit_event is None:
+        return
+    _, reason = emit_event(event, status, **fields)
+    if reason not in (None, "disabled"):
+        print(
+            f"recall-index: event append failed (reason: {reason})",
+            file=sys.stderr,
+        )
+
+def _source_state(sources: list[Path]) -> dict[str, dict]:
+    state = {}
+    for path in sources:
+        if not path.exists():
+            state[path.name] = {"exists": False}
+            continue
+        stat = path.stat()
+        state[path.name] = {
+            "exists": True,
+            "mtime_ns": stat.st_mtime_ns,
+            "size": stat.st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+    return state
+
+@contextmanager
+def _index_lock(db: Path):
+    lock = db.with_name(f".{db.name}.lock")
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(lock, flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+def needs_rebuild(db: Path, source_state: dict[str, dict]) -> bool:
+    if not db.exists():
+        return True
+    try:
+        c = sqlite3.connect(str(db))
+        row = c.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        if row is None or int(row[0]) != SCHEMA_VERSION:
+            return True
+        row = c.execute(
+            "SELECT value FROM meta WHERE key='source_state'"
+        ).fetchone()
+        return row is None or json.loads(row[0]) != source_state
+    except Exception:
+        return True
+    finally:
+        try: c.close()
+        except Exception: pass
+
+def rebuild(
+    db: Path,
+    records: list[dict],
+    source_state: dict[str, dict],
+    sources: list[Path],
+    allow_download: bool = False,
+) -> None:
+    temporary = db.with_name(f".{db.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        flags = os.O_CREAT | os.O_EXCL | os.O_RDWR
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(temporary, flags, 0o600)
+        os.close(fd)
+        c = sqlite3.connect(str(temporary))
+        try:
+            c.executescript(SCHEMA_SQL)
+            c.executemany(
+                "INSERT INTO records(source,seq,path,key,ref,scope,insight,tags,trigger,"
+                "derives_from,see_also,raw,hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                    (
+                        r["source"], r["seq"], r["path"], r["key"], r["ref"],
+                        r["scope"], r["insight"], r["tags"], r["trigger"],
+                        json.dumps(r["derives-from"]), json.dumps(r["see-also"]),
+                        r["raw"], _sha(r["raw"]),
+                    )
+                    for r in records
+                ])
+            c.execute("INSERT INTO records_fts(records_fts) VALUES('rebuild')")
+            _embed_and_store(c, records, allow_download=allow_download)
+            c.execute("INSERT OR REPLACE INTO meta VALUES('schema_version',?)",
+                      (str(SCHEMA_VERSION),))
+            c.execute("INSERT OR REPLACE INTO meta VALUES('rebuilt_at',?)",
+                      (str(int(time.time())),))
+            c.execute("INSERT OR REPLACE INTO meta VALUES('source_state',?)",
+                      (json.dumps(source_state, sort_keys=True),))
+            c.commit()
+        finally:
+            c.close()
+        if _source_state(sources) != source_state:
+            raise SourceChanged
+        os.replace(temporary, db)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+class SourceChanged(Exception):
+    pass
+
+def _ensure_private_mode(path: Path) -> None:
+    if path.stat().st_mode & 0o077:
+        os.chmod(path, 0o600)
+
+def ensure_index(force: bool = False, allow_download: bool = False) -> bool:
+    db = db_path()
+    sources = [memory_dir() / f"{s}.md" for s in SOURCES]
+    with _index_lock(db):
+        for _ in range(3):
+            source_state = _source_state(sources)
+            if not force and not needs_rebuild(db, source_state):
+                _ensure_private_mode(db)
+                return False
+            records = all_records()
+            _validate_unique_records(records)
+            if _source_state(sources) != source_state:
+                continue
+            try:
+                rebuild(
+                    db, records, source_state, sources,
+                    allow_download=allow_download,
+                )
+            except SourceChanged:
+                continue
+            _ensure_private_mode(db)
+            return True
+        raise OSError("canonical memory changed throughout index rebuild")
+
+# ── rung-3: embed at rebuild, store packed float32 vectors ───────────────────
+def _embed_and_store(conn, records: list[dict], allow_download: bool = False) -> None:
+    """Embed each record and store a packed float32 vector. Import-guarded: if
+    the dense backend is unavailable the vectors table stays empty and search
+    degrades to rung-2 BM25 (the .db remains a valid rung-2 index)."""
+    enc = embed_backend(allow_download=allow_download)
+    if enc is None:
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('embed_model','none')")
+        return
+    try:
+        import numpy as np
+        idmap = {(s, q): i for (i, s, q)
+                 in conn.execute("SELECT id, source, seq FROM records")}
+        mat = np.asarray(enc([_embed_text(r) for r in records]), dtype=np.float32)
+        conn.executemany(
+            "INSERT OR REPLACE INTO vectors(id, vec) VALUES(?,?)",
+            [(idmap[(r["source"], r["seq"])], v.tobytes())
+             for r, v in zip(records, mat)])
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('embed_model',?)",
+                     (_EMBED_CACHE["name"] or embed_model_name(),))
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('embed_dim',?)",
+                     (str(int(mat.shape[1])),))
+    except Exception:
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('embed_model','error')")
+
+# ── query (FTS5 ranked, grep fallback) ───────────────────────────────────────
+def _match_expr(query: str) -> str:
+    terms = [t for t in re.split(r'\s+', query.strip()) if t]
+    return " OR ".join('"' + t.replace('"', '""') + '"' for t in terms)
+
+def _scope_value(selector: str | None) -> str | None:
+    if selector in (None, "all"):
+        return None
+    if selector == "global":
+        return "global"
+    if selector.startswith("track:"):
+        slug = selector.removeprefix("track:")
+        if slug and re.fullmatch(r"[A-Za-z0-9._-]+", slug):
+            return slug
+    raise ValueError("scope must be global, all, or track:<slug>")
+
+def _validate_source(source: str | None) -> None:
+    if source is not None and source not in SOURCES:
+        raise ValueError(f"source must be one of: {', '.join(SOURCES)}")
+
+def search_with_meta(
+    query: str,
+    limit: int = 10,
+    source: str | None = None,
+    scope: str | None = None,
+) -> tuple[list[dict], dict]:
+    if not query.strip():
+        raise ValueError("query must not be empty")
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    _validate_source(source)
+    scope_value = _scope_value(scope)
+    _validate_unique_records(all_records())
+    db = db_path()
+    if not db.exists():
+        rows = grep_fallback(query, limit, source, scope_value)
+        return rows, {
+            "engine": "grep",
+            "degraded": True,
+            "reason_code": "sidecar_missing",
+        }
+    if not fts5_available():
+        rows = grep_fallback(query, limit, source, scope_value)
+        return rows, {
+            "engine": "grep",
+            "degraded": True,
+            "reason_code": "fts5_unavailable",
+        }
+    c = None
+    try:
+        ensure_index(allow_download=False)
+        c = sqlite3.connect(str(db))
+        bm25_rows = _bm25_rows(
+            c, query, source, scope_value, CANDIDATE_POOL
+        )
+        dense_rows = _dense_rows(
+            c, query, source, scope_value, CANDIDATE_POOL
+        )
+        if dense_rows is None:
+            return bm25_rows[:limit], {
+                "engine": "bm25",
+                "degraded": False,
+                "reason_code": None,
+            }
+        return _fuse(bm25_rows, dense_rows, limit), {
+            "engine": "hybrid",
+            "degraded": False,
+            "reason_code": None,
+        }
+    except (sqlite3.Error, OSError):
+        rows = grep_fallback(query, limit, source, scope_value)
+        return rows, {
+            "engine": "grep",
+            "degraded": True,
+            "reason_code": "sqlite_unavailable",
+        }
+    finally:
+        if c is not None:
+            c.close()
+
+def search(
+    query: str,
+    limit: int = 10,
+    source: str | None = None,
+    scope: str | None = None,
+) -> list[dict]:
+    rows, _ = search_with_meta(query, limit=limit, source=source, scope=scope)
+    return rows
+
+def _bm25_rows(
+    c,
+    query: str,
+    source: str | None,
+    scope: str | None,
+    limit: int,
+) -> list[dict]:
+    # Rank inside a subquery over the fts table alone (bm25() can't bind through
+    # a JOIN in the outer SELECT), then join records for the payload.
+    sql = (f"SELECT r.source, r.seq, r.ref, r.scope, r.key, r.insight, m.score FROM ("
+           f"  SELECT rowid, {BM25_RANK} AS score FROM records_fts "
+           f"  WHERE records_fts MATCH ? "
+           f"    AND (? IS NULL OR source = ?) "
+           f"    AND (? IS NULL OR scope = ?) "
+           f"  ORDER BY score LIMIT ?"
+           f") m JOIN records r ON r.id = m.rowid")
+    rows = c.execute(
+        sql,
+        [_match_expr(query), source, source, scope, scope, limit],
+    ).fetchall()
+    return [
+        {
+            "source": source_name,
+            "seq": seq,
+            "ref": ref,
+            "scope": record_scope,
+            "key": key,
+            "insight": insight,
+            "score": score,
+        }
+        for source_name, seq, ref, record_scope, key, insight, score in rows
+    ]
+
+def _dense_rows(
+    c,
+    query: str,
+    source: str | None,
+    scope: str | None,
+    limit: int,
+) -> list[dict] | None:
+    """Brute-force cosine over the packed vectors. Returns None (→ BM25 fallback)
+    if the dense backend is unavailable or no vectors are indexed. Brute-force is
+    correct below ~10k–50k vectors; the BLOB layout is ANN-swappable past that."""
+    enc = embed_backend(allow_download=False)
+    if enc is None:
+        return None
+    try:
+        import numpy as np
+        sql = ("SELECT r.source, r.seq, r.ref, r.scope, r.key, r.insight, v.vec "
+               "FROM vectors v JOIN records r ON r.id=v.id ")
+        args: list = []
+        filters = []
+        if source is not None:
+            filters.append("r.source=?")
+            args.append(source)
+        if scope is not None:
+            filters.append("r.scope=?")
+            args.append(scope)
+        if filters:
+            sql += "WHERE " + " AND ".join(filters)
+        rows = c.execute(sql, args).fetchall()
+        if not rows:
+            return None
+        M = np.vstack([np.frombuffer(r[6], dtype=np.float32) for r in rows])
+        M = M / (np.linalg.norm(M, axis=1, keepdims=True) + 1e-9)
+        q = np.asarray(enc([query]), dtype=np.float32)[0]
+        q = q / (np.linalg.norm(q) + 1e-9)
+        sims = M @ q
+        order = np.argsort(-sims)[:limit]
+        return [
+            {
+                "source": rows[i][0],
+                "seq": rows[i][1],
+                "ref": rows[i][2],
+                "scope": rows[i][3],
+                "key": rows[i][4],
+                "insight": rows[i][5],
+                "score": float(sims[i]),
+            }
+            for i in order
+        ]
+    except Exception:
+        return None
+
+def _fuse(bm25_rows: list[dict], dense_rows: list[dict], limit: int) -> list[dict]:
+    """Equal-weight Reciprocal Rank Fusion (DENSE_RRF_WEIGHT == BM25_RRF_WEIGHT == 1.0).
+    Measured: with working BM25, BM25 and dense are complementary — BM25 nails stems,
+    dense nails paraphrase — so neither dominates; equal weights win across buckets."""
+    meta: dict[str, dict] = {}
+    rrf: dict[str, float] = {}
+    for weight, rows in ((BM25_RRF_WEIGHT, bm25_rows), (DENSE_RRF_WEIGHT, dense_rows)):
+        for rank, r in enumerate(rows, 1):
+            meta[r["ref"]] = r
+            rrf[r["ref"]] = rrf.get(r["ref"], 0.0) + weight / (RRF_K + rank)
+    ordered = sorted(rrf, key=lambda k: -rrf[k])[:limit]
+    out = []
+    for k in ordered:
+        r = dict(meta[k])
+        r["score"] = rrf[k]
+        out.append(r)
+    return out
+
+def grep_fallback(
+    query: str,
+    limit: int,
+    source: str | None,
+    scope: str | None = None,
+) -> list[dict]:
+    """Rung-1 degradation: rank records by query-term hits in key+insight+tags."""
+    terms = [t.lower() for t in re.split(r'\s+', query.strip()) if t]
+    scored = []
+    for r in all_records():
+        if source and r["source"] != source:
+            continue
+        if scope is not None and r["scope"] != scope:
+            continue
+        hay = (r["key"] + " " + r["insight"] + " " + r["tags"]).lower()
+        hits = sum(hay.count(t) for t in terms)
+        if hits:
+            scored.append((hits, r))
+    scored.sort(key=lambda x: -x[0])
+    return [{"source": r["source"], "seq": r["seq"], "ref": r["ref"],
+             "scope": r["scope"], "key": r["key"],
+             "insight": r["insight"], "score": float(h)}
+            for h, r in scored[:limit]]
+
+# ── stable refs, exact fetch, and graph expansion ────────────────────────────
+REF_RE = re.compile(r"^(memory/(learnings|decisions)\.md)::(.+)$")
+
+def _parse_ref(ref: str) -> tuple[str, str]:
+    match = REF_RE.fullmatch(ref)
+    if not match or not match.group(3).strip() or "\n" in ref:
+        raise ValueError(
+            "ref must be memory/learnings.md::<key> or "
+            "memory/decisions.md::<key>"
+        )
+    return match.group(1), match.group(3).strip()
+
+def _public_record(record: dict, include_raw: bool = False) -> dict:
+    out = {
+        "ref": record["ref"],
+        "source": record["source"],
+        "path": record["path"],
+        "key": record["key"],
+        "scope": record["scope"],
+        "insight": record["insight"],
+        "trigger": record["trigger"],
+        "tags": record["tags"],
+        "derives_from": list(record["derives-from"]),
+        "see_also": list(record["see-also"]),
+    }
+    if include_raw:
+        out["raw"] = record["raw"]
+    return out
+
+def fetch_record(ref: str) -> dict | None:
+    _parse_ref(ref)
+    records = all_records()
+    _validate_unique_records(records)
+    for record in records:
+        if record["ref"] == ref:
+            return _public_record(record, include_raw=True)
+    return None
+
+def expand_records(refs: list[str], hops: int = 1) -> dict:
+    if hops not in (1, 2):
+        raise ValueError("hops must be 1 or 2")
+    if not refs:
+        raise ValueError("at least one ref is required")
+    for ref in refs:
+        _parse_ref(ref)
+
+    records = all_records()
+    _validate_unique_records(records)
+    by_ref = {record["ref"]: record for record in records}
+    by_key: dict[str, list[dict]] = {}
+    for record in records:
+        by_key.setdefault(record["key"], []).append(record)
+
+    missing_starts = sorted({ref for ref in refs if ref not in by_ref})
+    seed_refs = sorted({ref for ref in refs if ref in by_ref})
+    edge_map: dict[tuple[str, str, str], dict] = {}
+    unresolved = []
+    adjacency: dict[str, set[str]] = {ref: set() for ref in by_ref}
+
+    for record in records:
+        for field, hard in (("derives-from", True), ("see-also", False)):
+            for target_key in record[field]:
+                targets = by_key.get(target_key, [])
+                if len(targets) != 1:
+                    unresolved.append({
+                        "from_ref": record["ref"],
+                        "field": field,
+                        "target_key": target_key,
+                        "hard": hard,
+                        "reason_code": (
+                            "target_missing" if not targets else "target_ambiguous"
+                        ),
+                    })
+                    continue
+                target_ref = targets[0]["ref"]
+                edge_key = (record["ref"], target_ref, field)
+                edge_map[edge_key] = {
+                    "from_ref": record["ref"],
+                    "to_ref": target_ref,
+                    "type": field,
+                }
+                adjacency[record["ref"]].add(target_ref)
+                adjacency[target_ref].add(record["ref"])
+
+    distances = {ref: 0 for ref in seed_refs}
+    frontier = list(seed_refs)
+    while frontier:
+        current = frontier.pop(0)
+        distance = distances[current]
+        if distance >= hops:
+            continue
+        for neighbor in sorted(adjacency[current]):
+            if neighbor not in distances:
+                distances[neighbor] = distance + 1
+                frontier.append(neighbor)
+
+    visible_refs = set(distances)
+    visible_edges = [
+        edge for edge in edge_map.values()
+        if edge["from_ref"] in visible_refs and edge["to_ref"] in visible_refs
+    ]
+    visible_edges.sort(key=lambda edge: (
+        edge["from_ref"], edge["to_ref"], edge["type"]
+    ))
+    visible_missing = [
+        edge for edge in unresolved
+        if edge["from_ref"] in visible_refs
+        and distances[edge["from_ref"]] < hops
+    ]
+    visible_missing.sort(key=lambda edge: (
+        edge["from_ref"], edge["field"], edge["target_key"]
+    ))
+
+    expanded = []
+    for ref, distance in sorted(distances.items(), key=lambda item: (item[1], item[0])):
+        item = _public_record(by_ref[ref])
+        item["distance"] = distance
+        expanded.append(item)
+
+    if not seed_refs:
+        status = "not_found"
+    elif missing_starts or visible_missing:
+        status = "partial"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "start_refs": refs,
+        "hops": hops,
+        "records": expanded,
+        "edges": visible_edges,
+        "missing_start_refs": missing_starts,
+        "unresolved_edges": visible_missing,
+    }
+
+# ── bloat metrics (shared with curate) ───────────────────────────────────────
+ATOMIC_WORD_FLAG = 30   # insight over this is flagged (research target ≤25; +slack for tightly-coupled context)
+ATOMIC_WORD_IDEAL = 25
+
+def atomicity_violations(insight: str) -> list[str]:
+    """Flag why an insight breaks the one-record-one-insight rule. Operates on
+    the `insight:` field only — `evidence:`/`trigger:` may carry longer context
+    (the Zettelkasten-2025 caution against bare over-atomized claims). Heuristic,
+    not a parser: it surfaces split candidates for human judgement, never auto-splits."""
+    v = []
+    words = insight.split()
+    if len(words) > ATOMIC_WORD_FLAG:
+        v.append(f"long:{len(words)}w")
+    # sentence count (real sentence breaks, not decimals/abbreviations)
+    sents = [s for s in re.split(r'(?<=[.!?])\s+(?=[A-Z(])', insight.strip()) if len(s.split()) > 3]
+    if len(sents) > 1:
+        v.append(f"sentences:{len(sents)}")
+    # enumeration / list structure
+    if insight.count(';') >= 1:
+        v.append("semicolon")
+    if insight.count(':') >= 1:
+        v.append("colon-list")
+    if re.search(r'\b(first|second|third|finally)\b[,:]', insight, re.I):
+        v.append("enumerated")
+    # coordinating conjunction joining independent clauses (crude: conj after a comma)
+    if re.search(r',\s+(and|but|however|also|additionally|furthermore|moreover)\b', insight, re.I):
+        v.append("compound")
+    # parenthetical/dash asides stacking claims
+    if insight.count(' — ') + insight.count(' (') >= 2:
+        v.append("stacked-asides")
+    return v
+
+def bloat_report() -> dict:
+    recs = all_records()
+    def wc(s): return len(s.split())
+    by = {}
+    for src in SOURCES:
+        ws = [wc(r["insight"]) for r in recs if r["source"] == src and r["insight"]]
+        if ws:
+            by[src] = {"n": len(ws), "avg": round(sum(ws)/len(ws), 1),
+                       "median": sorted(ws)[len(ws)//2], "max": max(ws),
+                       "over30": sum(1 for w in ws if w > 30)}
+    total = [wc(r["insight"]) for r in recs if r["insight"]]
+    flagged = sum(1 for r in recs if r["insight"] and atomicity_violations(r["insight"]))
+    return {"by_source": by, "total": len(recs),
+            "over30": sum(1 for w in total if w > 30),
+            "over30_pct": round(100*sum(1 for w in total if w > 30)/max(len(total),1)),
+            "flagged": flagged,
+            "flagged_pct": round(100*flagged/max(len(recs),1))}
+
+def audit_records() -> list[dict]:
+    """Per-record atomicity audit, worst (densest) first."""
+    out = []
+    for r in all_records():
+        if not r["insight"]:
+            continue
+        v = atomicity_violations(r["insight"])
+        if v:
+            out.append({"source": r["source"], "key": r["key"],
+                        "words": len(r["insight"].split()), "violations": v})
+    out.sort(key=lambda x: -x["words"])
+    return out
+
+def _index_meta() -> dict:
+    """Read embedding metadata + vector count from the index (for status/CLI)."""
+    out = {"embed_model": "none", "embed_dim": 0, "vectors": 0}
+    db = db_path()
+    if not db.exists():
+        return out
+    try:
+        c = sqlite3.connect(str(db))
+        for k in ("embed_model", "embed_dim"):
+            row = c.execute("SELECT value FROM meta WHERE key=?", (k,)).fetchone()
+            if row:
+                out[k] = int(row[0]) if k == "embed_dim" and row[0].isdigit() else row[0]
+        row = c.execute("SELECT count(*) FROM vectors").fetchone()
+        out["vectors"] = row[0] if row else 0
+    except Exception:
+        pass
+    finally:
+        try: c.close()
+        except Exception: pass
+    return out
+
+# ── eval harness (golden set → P@k / MRR / recall) ───────────────────────────
+def run_eval(golden_path: Path) -> dict:
+    golden = json.loads(golden_path.read_text())
+    queries = golden["queries"]
+    ensure_index(force=True)
+    cats: dict[str, list] = {}
+    rows = []
+    for q in queries:
+        res = search(q["query"], limit=10)
+        returned = [r["key"] for r in res]
+        exp = q["expected"]
+        top5 = returned[:5]
+        p5 = sum(1 for k in top5 if k in exp) / min(5, len(exp))
+        r10 = sum(1 for k in exp if k in returned[:10]) / len(exp)
+        mrr = 0.0
+        for rank, k in enumerate(returned, 1):
+            if k in exp:
+                mrr = 1.0/rank
+                break
+        rec = {"query": q["query"], "category": q.get("category", "lexical"),
+               "p5": p5, "r10": r10, "mrr": mrr, "returned": returned[:5],
+               "expected": exp}
+        rows.append(rec)
+        cats.setdefault(rec["category"], []).append(rec)
+    def agg(rs):
+        n = len(rs)
+        return {"n": n, "p5": round(sum(r["p5"] for r in rs)/n, 3),
+                "mrr": round(sum(r["mrr"] for r in rs)/n, 3),
+                "r10": round(sum(r["r10"] for r in rs)/n, 3)}
+    return {"overall": agg(rows),
+            "by_category": {c: agg(rs) for c, rs in cats.items()},
+            "rows": rows}
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
+def _search_args(rest: list[str]) -> tuple[int, str | None, str | None, bool, str]:
+    limit, source, scope, json_out, terms = 10, None, None, False, []
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg in ("-n", "--limit"):
+            if i + 1 >= len(rest):
+                raise ValueError(f"{arg} needs a value")
+            try:
+                limit = int(rest[i + 1])
+            except ValueError as exc:
+                raise ValueError("limit must be an integer") from exc
+            i += 2
+        elif arg == "--source":
+            if i + 1 >= len(rest):
+                raise ValueError("--source needs a value")
+            source = rest[i + 1]
+            i += 2
+        elif arg == "--scope":
+            if i + 1 >= len(rest):
+                raise ValueError("--scope needs a value")
+            scope = rest[i + 1]
+            i += 2
+        elif arg == "--json":
+            json_out = True
+            i += 1
+        elif arg.startswith("-"):
+            raise ValueError(f"unknown option: {arg}")
+        else:
+            terms.append(arg)
+            i += 1
+    if not terms:
+        raise ValueError("query terms are required")
+    query = " ".join(terms)
+    _validate_source(source)
+    _scope_value(scope)
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    return limit, source, scope, json_out, query
+
+def _engine_label(meta: dict) -> str:
+    if meta["engine"] == "grep":
+        return f"grep(degraded: {meta['reason_code']})"
+    if meta["engine"] == "hybrid":
+        emb = _index_meta()
+        return f"rung-3 hybrid (BM25 + dense:{emb['embed_model']})"
+    return "rung-2 BM25"
+
+def _print_search(
+    results: list[dict],
+    meta: dict,
+    *,
+    use_refs: bool,
+) -> None:
+    print(f"# {len(results)} result(s) via {_engine_label(meta)}")
+    for result in results:
+        label = result["ref"] if use_refs else result["source"]
+        print(f"  [{label}] {result['key']}  (score {result['score']:.2f})")
+        print(f"      {result['insight'][:120]}")
+
+def _safe_record_count() -> int:
+    try:
+        return len(all_records())
+    except (OSError, UnicodeError):
+        return 0
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        print(__doc__)
+        return 0
+    cmd = argv[0]
+    started = time.monotonic()
+    elapsed_ms = lambda: int((time.monotonic() - started) * 1000)
+    if cmd == "ensure":
+        rest = argv[1:]
+        json_out = "--json" in rest
+        if any(arg != "--json" for arg in rest):
+            print("usage: recall-index ensure [--json]", file=sys.stderr)
+            return 2
+        if not fts5_available():
+            result = {
+                "schema": "cortex.retrieval-ensure/v1",
+                "status": "degraded",
+                "changed": False,
+                "engine": "grep",
+                "reason_code": "fts5_unavailable",
+                "records": _safe_record_count(),
+                "vectors": 0,
+            }
+            _record_event(
+                "retrieval.ensure",
+                "degraded",
+                duration_ms=elapsed_ms(),
+                reason_code="fts5_unavailable",
+                counts={"indexed": result["records"], "vectors": 0},
+                attributes={"mode": "grep", "changed": False},
+            )
+            print(json.dumps(result, sort_keys=True) if json_out else
+                  "recall-index: ensure degraded to grep "
+                  "(reason: fts5_unavailable)")
+            return 0
+        try:
+            changed = ensure_index(allow_download=False)
+            bloat = bloat_report()
+            emb = _index_meta()
+        except ValueError as exc:
+            _record_event(
+                "retrieval.ensure",
+                "failed",
+                duration_ms=elapsed_ms(),
+                reason_code="invalid_memory",
+                counts={"indexed": 0, "vectors": 0},
+                attributes={"mode": "grep", "changed": False},
+            )
+            print(
+                f"recall-index: ensure failed (reason: invalid_memory): {exc}",
+                file=sys.stderr,
+            )
+            return 4
+        except (sqlite3.Error, OSError):
+            result = {
+                "schema": "cortex.retrieval-ensure/v1",
+                "status": "degraded",
+                "changed": False,
+                "engine": "grep",
+                "reason_code": "sqlite_unavailable",
+                "records": _safe_record_count(),
+                "vectors": 0,
+            }
+            _record_event(
+                "retrieval.ensure",
+                "degraded",
+                duration_ms=elapsed_ms(),
+                reason_code="sqlite_unavailable",
+                counts={"indexed": result["records"], "vectors": 0},
+                attributes={"mode": "grep", "changed": False},
+            )
+            print(json.dumps(result, sort_keys=True) if json_out else
+                  "recall-index: ensure degraded to grep "
+                  "(reason: sqlite_unavailable)")
+            return 0
+        mode = "hybrid" if emb["vectors"] else "bm25"
+        result = {
+            "schema": "cortex.retrieval-ensure/v1",
+            "status": "ok",
+            "changed": changed,
+            "engine": mode,
+            "reason_code": None,
+            "records": bloat["total"],
+            "vectors": emb["vectors"],
+        }
+        _record_event(
+            "retrieval.ensure",
+            "ok",
+            duration_ms=elapsed_ms(),
+            counts={"indexed": bloat["total"], "vectors": emb["vectors"]},
+            attributes={"mode": mode, "changed": changed},
+        )
+        print(json.dumps(result, sort_keys=True) if json_out else
+              f"recall-index: {'rebuilt' if changed else 'current'} "
+              f"→ {bloat['total']} records ({mode})")
+        return 0
+    if cmd == "rebuild":
+        force = "--force" in argv
+        if not fts5_available():
+            _record_event(
+                "retrieval.rebuild",
+                "failed",
+                duration_ms=elapsed_ms(),
+                reason_code="fts5_unavailable",
+            )
+            print("recall-index: FTS5 not available in this sqlite3 build; "
+                  "recall will degrade to grep. Nothing to build.", file=sys.stderr)
+            return 3
+        rebuilt = ensure_index(force=force, allow_download=True)
+        b = bloat_report()
+        emb = _index_meta()
+        dense = (f"+ dense [{emb['embed_model']}, {emb['embed_dim']}d, "
+                 f"{emb['vectors']} vecs]" if emb["vectors"] else "(BM25 only — no dense layer)")
+        print(f"recall-index: {'rebuilt' if rebuilt else 'up to date'} "
+              f"→ {b['total']} records indexed at {db_path()} {dense}")
+        _record_event(
+            "retrieval.rebuild",
+            "ok",
+            duration_ms=elapsed_ms(),
+            counts={"indexed": b["total"], "vectors": emb["vectors"]},
+            attributes={
+                "mode": "hybrid" if emb["vectors"] else "bm25",
+                "changed": rebuilt,
+            },
+        )
+        return 0
+    if cmd in ("query", "search"):
+        try:
+            limit, source, scope, json_out, query = _search_args(argv[1:])
+            results, meta = search_with_meta(
+                query, limit=limit, source=source, scope=scope
+            )
+        except ValueError as exc:
+            print(f"recall-index: {exc}", file=sys.stderr)
+            return 2
+        _record_event(
+            "retrieval.search",
+            "degraded" if meta["degraded"] else "ok",
+            duration_ms=elapsed_ms(),
+            reason_code=meta["reason_code"],
+            refs=[result["ref"] for result in results],
+            counts={"returned": len(results)},
+            hashes={"query_sha256": _sha(query)},
+            attributes={
+                "mode": meta["engine"],
+                "scope": scope or "all",
+                "source": source or "all",
+            },
+        )
+        if json_out:
+            payload = {
+                "schema": "cortex.retrieval-search/v1",
+                "query_sha256": _sha(query),
+                "scope": scope or "all",
+                "source": source or "all",
+                "limit": limit,
+                **meta,
+                "results": results,
+            }
+            print(json.dumps(payload, sort_keys=True))
+        else:
+            _print_search(results, meta, use_refs=(cmd == "search"))
+        return 0
+    if cmd == "fetch":
+        rest = argv[1:]
+        json_out = "--json" in rest
+        args = [arg for arg in rest if arg != "--json"]
+        if len(args) != 1:
+            print("usage: recall-index fetch \"<ref>\" [--json]", file=sys.stderr)
+            return 2
+        try:
+            record = fetch_record(args[0])
+        except ValueError as exc:
+            print(f"recall-index: {exc}", file=sys.stderr)
+            return 2
+        if record is None:
+            _record_event(
+                "retrieval.fetch",
+                "not_found",
+                duration_ms=elapsed_ms(),
+                reason_code="ref_not_found",
+                refs=[args[0]],
+                counts={"returned": 0},
+            )
+            if json_out:
+                print(json.dumps({
+                    "schema": "cortex.retrieval-fetch/v1",
+                    "status": "not_found",
+                    "reason_code": "ref_not_found",
+                    "ref": args[0],
+                    "record": None,
+                }, sort_keys=True))
+            else:
+                print(
+                    f"recall-index: ref not found: {args[0]} "
+                    "(reason: ref_not_found)",
+                    file=sys.stderr,
+                )
+            return 4
+        _record_event(
+            "retrieval.fetch",
+            "ok",
+            duration_ms=elapsed_ms(),
+            refs=[args[0]],
+            counts={"returned": 1},
+        )
+        if json_out:
+            print(json.dumps({
+                "schema": "cortex.retrieval-fetch/v1",
+                "status": "ok",
+                "reason_code": None,
+                "ref": args[0],
+                "record": record,
+            }, sort_keys=True))
+        else:
+            sys.stdout.write(record["raw"])
+        return 0
+    if cmd == "expand":
+        rest = argv[1:]
+        json_out = False
+        hops = 1
+        refs = []
+        i = 0
+        try:
+            while i < len(rest):
+                if rest[i] == "--json":
+                    json_out = True
+                    i += 1
+                elif rest[i] == "--hops":
+                    if i + 1 >= len(rest):
+                        raise ValueError("--hops needs a value")
+                    try:
+                        hops = int(rest[i + 1])
+                    except ValueError as exc:
+                        raise ValueError("hops must be an integer") from exc
+                    i += 2
+                elif rest[i].startswith("-"):
+                    raise ValueError(f"unknown option: {rest[i]}")
+                else:
+                    refs.append(rest[i])
+                    i += 1
+            payload = expand_records(refs, hops=hops)
+        except ValueError as exc:
+            print(f"recall-index: {exc}", file=sys.stderr)
+            return 2
+        payload = {"schema": "cortex.retrieval-expand/v1", **payload}
+        _record_event(
+            "retrieval.expand",
+            payload["status"],
+            duration_ms=elapsed_ms(),
+            reason_code=(
+                "ref_not_found" if payload["status"] == "not_found"
+                else "unresolved_edge" if payload["status"] == "partial"
+                else None
+            ),
+            refs=payload["start_refs"],
+            counts={
+                "returned": len(payload["records"]),
+                "edges": len(payload["edges"]),
+                "missing": (
+                    len(payload["missing_start_refs"])
+                    + len(payload["unresolved_edges"])
+                ),
+            },
+            attributes={"hops": payload["hops"]},
+        )
+        if json_out:
+            print(json.dumps(payload, sort_keys=True))
+        else:
+            print(
+                f"# {payload['status']} expansion: "
+                f"{len(payload['records'])} record(s), {len(payload['edges'])} edge(s)"
+            )
+            for record in payload["records"]:
+                print(f"  d={record['distance']}  {record['ref']}")
+            for edge in payload["edges"]:
+                print(
+                    f"  {edge['from_ref']} --{edge['type']}--> {edge['to_ref']}"
+                )
+            for ref in payload["missing_start_refs"]:
+                print(f"  missing start: {ref} (ref_not_found)")
+            for edge in payload["unresolved_edges"]:
+                print(
+                    f"  unresolved {edge['field']}: {edge['from_ref']} -> "
+                    f"{edge['target_key']} ({edge['reason_code']})"
+                )
+        return 4 if payload["status"] == "not_found" else 0
+    if cmd == "status":
+        db = db_path()
+        b = bloat_report()
+        emb = _index_meta()
+        json_out = "--json" in argv[1:]
+        if any(arg != "--json" for arg in argv[1:]):
+            print("usage: recall-index status [--json]", file=sys.stderr)
+            return 2
+        payload = {
+            "schema": "cortex.retrieval-status/v1",
+            "db": str(db),
+            "present": db.exists(),
+            "fts5": fts5_available(),
+            "dense": emb,
+            "embedding_backend_installed": _select_backend() is not None,
+            "records": b["total"],
+            "bloat": b,
+        }
+        if json_out:
+            print(json.dumps(payload, sort_keys=True))
+            return 0
+        print(f"index db:   {db}  ({'present' if db.exists() else 'ABSENT — grep fallback'})")
+        print(f"fts5:       {'available' if fts5_available() else 'MISSING — grep fallback'}")
+        if emb["vectors"]:
+            print(f"dense:      rung-3 active — {emb['embed_model']} "
+                  f"({emb['embed_dim']}d, {emb['vectors']} vectors)")
+        else:
+            avail = "available" if payload["embedding_backend_installed"] else "deps absent"
+            print(f"dense:      rung-2 (no vectors indexed; embedding backend {avail})")
+        print(f"records:    {b['total']}")
+        print(f"bloat:      {b['over30']}/{b['total']} insights >30w ({b['over30_pct']}%); "
+              f"{b['flagged']} flagged non-atomic ({b['flagged_pct']}%)")
+        for src, s in b["by_source"].items():
+            print(f"  {src:10s} n={s['n']} avg={s['avg']}w median={s['median']}w "
+                  f"max={s['max']}w over30={s['over30']}")
+        return 0
+    if cmd == "audit":
+        limit = None
+        if "-n" in argv:
+            limit = int(argv[argv.index("-n")+1])
+        rows = audit_records()
+        b = bloat_report()
+        print(f"# atomicity audit — {b['flagged']}/{b['total']} records flagged non-atomic "
+              f"({b['flagged_pct']}%); target insight ≤{ATOMIC_WORD_IDEAL}w, one claim")
+        for r in (rows[:limit] if limit else rows):
+            print(f"  [{r['source'][:1].upper()}] {r['words']:3d}w  {r['key']}")
+            print(f"        {', '.join(r['violations'])}")
+        return 0
+    if cmd == "eval":
+        gp = Path(argv[1]) if len(argv) > 1 else (
+            repo_root() / "workspace/cortex-substrate/memory-atomicity-prune-index/"
+            "artifacts/golden.json")
+        if not gp.exists():
+            print(f"recall-index: golden set not found at {gp}", file=sys.stderr)
+            return 2
+        rep = run_eval(gp)
+        o = rep["overall"]
+        print(f"recall-index eval — {o['n']} queries")
+        print(f"  overall   P@5 {o['p5']:.3f}  MRR {o['mrr']:.3f}  recall@10 {o['r10']:.3f}")
+        for c, a in sorted(rep["by_category"].items()):
+            print(f"  {c:12s} P@5 {a['p5']:.3f}  MRR {a['mrr']:.3f}  recall@10 {a['r10']:.3f}  (n={a['n']})")
+        zero = [r["query"] for r in rep["rows"] if r["r10"] == 0]
+        if zero:
+            print(f"  zero-recall ({len(zero)}):")
+            for q in zero:
+                print(f"    - {q}")
+        return 0
+    print(f"recall-index: unknown command {cmd!r}", file=sys.stderr)
+    return 2
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

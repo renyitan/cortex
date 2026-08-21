@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# cortex-bind — bind a consumer repo to cortex: generate its canonical agent file.
+#
+# This is the *consume seam*. A personal agent (any persona) mounts cortex as an
+# installed Copilot CLI plugin (the skills) plus an agent file that carries the always-on
+# cognition (the identity) overlaid with the agent's own persona. In Copilot CLI the *.agent.md
+# body is the only ambient surface scoped to one agent, so cognition lives in the agent body.
+#
+# It writes (per --host, default copilot):
+#   copilot →  <repo>/.github/agents/<name>.agent.md   CANONICAL agent = cortex identity + persona;
+#                                                       `copilot --agent <name>` loads it.
+#              <repo>/AGENTS.md                         a THIN STUB pointing at it (unless --no-stub).
+#   claude  →  <repo>/CLAUDE.md                         FULL identity + persona (Claude's always-on surface).
+#
+# The agent's description and the embedded persona body both come from ONE source — the persona file
+# <repo>/agents/<name>.md. If that file opens with a YAML frontmatter block carrying `description:`,
+# cortex-bind uses it for the agent's description and strips the frontmatter from the embedded body.
+# A --description flag still overrides; a built-in default still backstops.
+#
+# All outputs are GENERATED and written ONLY on drift (identical content is left untouched, so a
+# session-start hook can re-run this every launch without churning the working tree). Edit the source
+# instead: the persona (<repo>/agents/<name>.md) or cortex's identity (upstream).
+#
+# Identity source resolves relative to this script (`bin/cortex-bind` -> `../identity/`), so it works
+# unchanged whether run from the committed plugin in the source repo or the installed plugin payload.
+#
+# Usage: cortex-bind <name> [--repo DIR] [--persona FILE] [--identity-dir DIR] [--host copilot|claude]
+#                           [--target T] [--description TEXT] [--no-stub] [--quiet]
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+NAME=""
+REPO="."
+PERSONA=""
+IDENTITY_DIR="$SCRIPT_DIR/../identity"             # bin/ + identity/ are siblings, in source and payload alike
+HOST="copilot"
+TARGET=""
+DESCRIPTION=""
+WRITE_STUB=1
+QUIET=0
+
+die() { echo "cortex-bind: $*" >&2; exit 1; }
+log() { [ "$QUIET" -eq 1 ] || echo "cortex-bind: $*"; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)         shift; REPO="${1:?--repo needs a dir}" ;;
+    --repo=*)       REPO="${1#--repo=}" ;;
+    --persona)      shift; PERSONA="${1:?--persona needs a file}" ;;
+    --persona=*)    PERSONA="${1#--persona=}" ;;
+    --identity-dir) shift; IDENTITY_DIR="${1:?--identity-dir needs a dir}" ;;
+    --identity-dir=*) IDENTITY_DIR="${1#--identity-dir=}" ;;
+    --host)         shift; HOST="${1:?--host needs copilot|claude}" ;;
+    --host=*)       HOST="${1#--host=}" ;;
+    --target)       shift; TARGET="${1:?--target needs a value}" ;;
+    --target=*)     TARGET="${1#--target=}" ;;
+    --description)  shift; DESCRIPTION="${1:?--description needs text}" ;;
+    --description=*) DESCRIPTION="${1#--description=}" ;;
+    --no-stub)      WRITE_STUB=0 ;;
+    --quiet)        QUIET=1 ;;
+    -h|--help)      sed -n '2,35p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -*)             die "unknown option: $1" ;;
+    *)              [ -z "$NAME" ] && NAME="$1" || die "unexpected arg: $1" ;;
+  esac
+  shift
+done
+
+[ -n "$NAME" ] || die "need an agent name (e.g. cortex-bind ada)"
+[ -d "$REPO" ] || die "repo not found: $REPO"
+[ -z "$PERSONA" ] && PERSONA="$REPO/agents/$NAME.md"
+[ -f "$PERSONA" ] || die "persona not found: $PERSONA  (pass --persona FILE)"
+for f in charter ethos operating; do
+  [ -f "$IDENTITY_DIR/$f.md" ] || die "cortex identity not found at: $IDENTITY_DIR  (pass --identity-dir DIR)"
+done
+
+# --- persona frontmatter: ONE source for description + body ------------------------------------
+# A persona MAY open with a YAML frontmatter block (--- ... ---). If it carries `description:`,
+# that becomes the agent's description; the block is always stripped from the embedded body.
+persona_description() {
+  awk '
+    NR==1 && $0=="---" {infm=1; next}
+    infm && $0=="---" {exit}
+    infm && /^[[:space:]]*description:/ {
+      sub(/^[[:space:]]*description:[[:space:]]*/, ""); print; exit
+    }
+  ' "$PERSONA"
+}
+persona_body() {
+  awk '
+    NR==1 && $0=="---" {infm=1; next}
+    infm && $0=="---" {infm=0; next}
+    infm {next}
+    {print}
+  ' "$PERSONA"
+}
+
+# description priority: --description flag > persona frontmatter > built-in default
+if [ -z "$DESCRIPTION" ]; then
+  DESCRIPTION="$(persona_description || true)"
+  DESCRIPTION="${DESCRIPTION%\"}"; DESCRIPTION="${DESCRIPTION#\"}"   # strip surrounding quotes if any
+fi
+[ -n "$DESCRIPTION" ] || DESCRIPTION="The $NAME agent — inherits the cortex cognition substrate (WAKE -> WORK -> SLEEP -> CURATE, the memory model, the capability skills) and overlays its own persona, voice, and domain. State is plain markdown in this repo (memory/, workspace/)."
+
+# Title-case the name for headings (ada -> Ada)
+TITLE="$(printf '%s' "$NAME" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
+
+# --- write-on-drift: replace destination only when composed content actually changed ------------
+emit() {
+  # emit <dest> ; composed content arrives on stdin. Prints a one-line status. Never churns on no-op.
+  local dest="$1" tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/cortex-bind.XXXXXX")"
+  cat > "$tmp"
+  if [ -f "$dest" ] && cmp -s "$tmp" "$dest"; then
+    rm -f "$tmp"
+    log "unchanged $dest"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dest")"
+  mv "$tmp" "$dest"
+  log "wrote $dest  ($(wc -l < "$dest" | tr -d ' ') lines)"
+}
+
+case "$HOST" in
+  copilot)
+    # Copilot CLI: the *.agent.md body is the surface scoped to `--agent <name>`.
+    # AGENTS.md stays a thin stub because `--agent` AUGMENTS (does not replace) AGENTS.md.
+    [ -n "$TARGET" ] || TARGET="github-copilot"
+    AGENT_FILE="$REPO/.github/agents/$NAME.agent.md"
+    emit "$AGENT_FILE" <<EOF
+---
+name: $NAME
+description: "$DESCRIPTION"
+target: $TARGET
+user-invocable: true
+---
+
+<!-- GENERATED by cortex-bind from cortex identity + agents/$NAME.md — DO NOT EDIT HERE.
+     Edit the persona (agents/$NAME.md) or cortex's identity (the installed cortex plugin), then
+     re-bind. The cortex session-start hook re-binds automatically on the next launch. -->
+
+$(cat "$IDENTITY_DIR/charter.md" "$IDENTITY_DIR/ethos.md" "$IDENTITY_DIR/operating.md")
+
+---
+
+$(persona_body)
+EOF
+
+    if [ "$WRITE_STUB" -eq 1 ]; then
+      emit "$REPO/AGENTS.md" <<EOF
+<!-- GENERATED by cortex-bind — DO NOT EDIT. This repo is operated by the \`$NAME\` agent;
+     the full definition (cortex cognition + persona) is in .github/agents/$NAME.agent.md.
+     Kept thin on purpose: \`copilot --agent $NAME\` augments (does not replace) AGENTS.md. -->
+
+# $TITLE
+
+This repository is operated by the **$NAME** agent. Its full definition — the cortex cognition
+layer plus $TITLE's persona — lives in
+[\`.github/agents/$NAME.agent.md\`](.github/agents/$NAME.agent.md).
+
+**Run it:** \`copilot --agent $NAME\`
+
+- **Cognition skills** (recall, consolidate, curate, encode, filing) come from the installed
+  **cortex** plugin — check \`copilot plugin list\`.
+- **Persona, memory, and work** live in this repo: \`agents/$NAME.md\`, \`memory/\`, \`workspace/\`.
+EOF
+    fi
+    ;;
+
+  claude)
+    # Claude Code: CLAUDE.md IS the always-on instruction surface (no plugin agent-body augmentation),
+    # so the full identity + persona lives directly in CLAUDE.md. No thin stub, no frontmatter.
+    emit "$REPO/CLAUDE.md" <<EOF
+<!-- GENERATED by cortex-bind (--host claude) from cortex identity + agents/$NAME.md — DO NOT EDIT HERE.
+     Edit the persona (agents/$NAME.md) or cortex's identity (the installed cortex plugin), then re-bind. -->
+
+# $TITLE
+
+This repository is operated by the **$NAME** agent — the cortex cognition layer below, overlaid
+with $TITLE's persona. Cognition **skills** (recall, consolidate, curate, encode, filing) come from
+the installed cortex **claude** plugin.
+
+---
+
+$(cat "$IDENTITY_DIR/charter.md" "$IDENTITY_DIR/ethos.md" "$IDENTITY_DIR/operating.md")
+
+---
+
+$(persona_body)
+EOF
+    ;;
+
+  *)
+    die "unknown --host: $HOST  (expected copilot|claude)"
+    ;;
+esac
+
+if [ "$HOST" = "claude" ]; then
+  log "done. Open this repo in Claude Code (CLAUDE.md loads automatically)."
+else
+  log "done. Run it with:  copilot --agent $NAME"
+fi

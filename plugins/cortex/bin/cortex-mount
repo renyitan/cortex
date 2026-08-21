@@ -1,0 +1,276 @@
+#!/usr/bin/env bash
+# cortex-mount — the self-mounting seam. Runs as the cortex plugin's `sessionStart` hook.
+#
+# Why this exists: a Copilot CLI agent's always-on cognition must live INSIDE its agent body
+# (`.github/agents/<name>.agent.md`) — that is the only ambient surface scoped to one agent. So the
+# body is a COMPOSED artifact (cortex identity + the repo's persona) that would go stale whenever the
+# cortex plugin updates. Historically each consumer carried a `sync`/`boot` script to re-compose it.
+# This hook moves that seam INTO the plugin: every consumer inherits auto-rebinding for free and
+# carries ZERO scripts of its own.
+#
+# What it does, every session start, in the project directory:
+#   1. Guard — act only where at least one persona exists (`agents/*.md`). Everywhere else: silent.
+#   2. Scaffold — if a persona exists but the state homes don't, create memory/ + workspace/ once.
+#   3. Re-bind — recompose each `agents/<name>.md` into its host entrypoint, writing ONLY on drift.
+#   4. Expose tools — symlink the plugin's `tools/*` into a gitignored `.cortex/bin/` so a consumer's
+#      agent can invoke shipped runtime helpers (e.g. `refs`) at a stable, repo-relative path.
+#   5. Version pin — reconcile the installed plugin version with the consumer's `.cortex-version`
+#      pin, and print `cortex vX (was vY)` on change so a version shift is never silent mid-work.
+#
+# By default it NEVER runs git (no silent commits in someone's repo) and NEVER pulls a newer plugin
+# (changing the cognition you breathe is an explicit `copilot plugin update cortex`). A drift-triggered
+# rebind lands for the NEXT launch — same one-session lag the old boot script had.
+#
+# Opt-in (CORTEX_REBIND_AUTOCOMMIT truthy): auto-commit a drifted re-bind so the repo's entrypoint
+# never silently lags the installed identity. Even then it commits ONLY the regenerated entrypoint
+# file(s) — never `git add -A`, so in-progress work is never swept in — and it NEVER pushes (a
+# shared-remote side effect stays an explicit, human act). Off by default so the hook stays a silent
+# no-op in a consumer's repo unless that consumer asks for it.
+#
+# Env (provided by the host at hook time): COPILOT_PROJECT_DIR (the consumer repo),
+# COPILOT_PLUGIN_ROOT (this plugin's payload root). Both have sane fallbacks for manual runs.
+set -euo pipefail
+
+PROJECT="${COPILOT_PROJECT_DIR:-$PWD}"
+PLUGIN_ROOT="${COPILOT_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+BIND="$PLUGIN_ROOT/bin/cortex-bind"
+PHASE="$PLUGIN_ROOT/tools/cognition-phase"
+
+# 1. guard — silent no-op outside a cortex consumer ---------------------------------------------
+[ -d "$PROJECT/agents" ] || exit 0
+personas=""
+for p in "$PROJECT"/agents/*.md; do
+  [ -f "$p" ] && personas="$personas $p"
+done
+[ -n "$personas" ] || exit 0
+[ -x "$BIND" ] || exit 0
+
+# 2. record the SessionStart WAKE expectation before readiness work -----------------------------
+# SessionStart provides a stable session ID on stdin. Derive a private phase lane and owner from it,
+# create or reuse one WAKE expectation, and retain only the opaque owner receipt for context
+# injection. The helper and injection are advisory: malformed input or an unavailable helper never
+# blocks mounting.
+phase_hook_output=""
+if [ -x "$PHASE" ] && command -v python3 >/dev/null 2>&1; then
+  hook_input=""
+  if [ ! -t 0 ]; then
+    hook_input="$(cat 2>/dev/null || true)"
+  fi
+  phase_identity="$(
+    printf '%s' "$hook_input" |
+      PYTHONPATH="$PLUGIN_ROOT/tools" python3 -c '
+import json
+import sys
+from cognition_phase import session_identity
+
+try:
+    payload = json.load(sys.stdin)
+    session_id = payload.get("sessionId") or payload.get("session_id")
+    lane_id, owner_id = session_identity(session_id)
+except (AttributeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(0)
+print(lane_id)
+print(owner_id)
+' 2>/dev/null || true
+  )"
+  derived_lane="$(printf '%s\n' "$phase_identity" | sed -n '1p')"
+  derived_owner="$(printf '%s\n' "$phase_identity" | sed -n '2p')"
+  if [ -n "$derived_lane" ] && [ -n "$derived_owner" ]; then
+    lane_id="${CORTEX_PHASE_LANE_ID:-$derived_lane}"
+    owner_id="${CORTEX_PHASE_OWNER_ID:-$derived_owner}"
+    CORTEX_REPO_ROOT="$PROJECT" \
+    CORTEX_EVENT_REPO_ROOT="$PROJECT" \
+      "$PHASE" reconcile \
+        --lane-id "$lane_id" \
+        --owner-id "$owner_id" >/dev/null || true
+    phase_result="$(
+      CORTEX_REPO_ROOT="$PROJECT" \
+      CORTEX_EVENT_REPO_ROOT="$PROJECT" \
+      "$PHASE" expect \
+        --lane-id "$lane_id" \
+        --owner-id "$owner_id" \
+        --phase wake \
+        --skill recall \
+        --trigger session_start \
+        --origin runtime \
+        --requirement required \
+        --enforcement model_owned \
+        --effect none \
+        --if-absent || true
+    )"
+    phase_hook_output="$(
+      printf '%s' "$phase_result" | python3 -c '
+import json
+import sys
+
+try:
+    result = json.load(sys.stdin)
+    receipt_id = result["receipt_id"] if result.get("ok") else None
+except (KeyError, TypeError, json.JSONDecodeError):
+    raise SystemExit(0)
+if (
+    not isinstance(receipt_id, str)
+    or len(receipt_id) != 32
+    or any(character not in "0123456789abcdef" for character in receipt_id)
+):
+    raise SystemExit(0)
+context = (
+    "Cortex phase observability is advisory. "
+    f"For cognition lifecycle calls in this session, pass the opaque "
+    f"CORTEX_PHASE_RECEIPT_ID={receipt_id} to .cortex/bin/cognition-phase "
+    "and never write the receipt into canonical memory or workspace files."
+)
+print(json.dumps({"additionalContext": context}, separators=(",", ":")))
+' 2>/dev/null || true
+    )"
+  fi
+fi
+
+# 3. scaffold the state homes once (pit of success: a hand-made consumer still gets a working brain)
+if [ ! -d "$PROJECT/memory" ]; then
+  mkdir -p "$PROJECT/memory"
+  cat > "$PROJECT/memory/learnings.md" <<'SEED'
+# learnings — semantic memory
+
+Durable know-how this agent has earned. `recall` reads this at wake; `consolidate` writes it at
+sleep; `curate` keeps it high-signal. Record shape (cortex §6 schema):
+
+```
+### <key>  ·  type:<pattern|pitfall|preference|tool|operational|architecture|investigation>  ·  conf:<n>/10
+insight:  <one sentence>
+trigger:  <when this should fire>
+evidence: <quote/source · date>
+source:   observed | operator | imported      scope: global | <track>
+updated:  <YYYY-MM-DD>
+derives-from: <key>            # optional hard provenance edge
+see-also: <key>                # optional soft association
+```
+SEED
+  cat > "$PROJECT/memory/decisions.md" <<'SEED'
+# decisions — settled choices
+
+Choices this agent has settled. Never pruned, only superseded (reversals chain via `supersedes:`).
+When a question touches a past choice, surface it rather than silently re-litigating.
+SEED
+fi
+if [ ! -d "$PROJECT/workspace" ]; then
+  mkdir -p "$PROJECT/workspace"
+  cat > "$PROJECT/workspace/README.md" <<'SEED'
+# workspace — the desk
+
+The work itself (episodic memory). Each unit of work is an *episode* inside a *track*; `encode`
+carries it idea → done → archive and `filing` gives every artifact an obvious home. Open an episode
+the moment real work begins, so it stays resumable across sessions.
+SEED
+fi
+
+# 4. re-bind each persona into its host entrypoint (write-on-drift; quiet on no change) ----------
+# Always bind the Copilot host (this hook runs under it). Also refresh a Claude projection when the
+# consumer already keeps one (a CLAUDE.md present) — keep every existing binding fresh, but never
+# create an unsolicited one.
+rebound=""
+for persona in $personas; do
+  name="$(basename "$persona" .md)"
+  "$BIND" "$name" --repo "$PROJECT" --host copilot --quiet || true
+  rebound="$rebound .github/agents/$name.agent.md"
+  if [ -f "$PROJECT/CLAUDE.md" ]; then
+    "$BIND" "$name" --repo "$PROJECT" --host claude --quiet || true
+    rebound="$rebound CLAUDE.md"
+  fi
+done
+
+# 4b. opt-in: auto-commit a drifted re-bind — never push ----------------------------------------
+# Gated on CORTEX_REBIND_AUTOCOMMIT (default off). Stage ONLY the regenerated entrypoint file(s) so
+# the operator's in-progress work is never swept in; never push.
+if [ -n "${CORTEX_REBIND_AUTOCOMMIT:-}" ] && [ "${CORTEX_REBIND_AUTOCOMMIT}" != "0" ] \
+   && git -C "$PROJECT" rev-parse --git-dir >/dev/null 2>&1; then
+  drifted=""
+  for f in $rebound; do
+    [ -e "$PROJECT/$f" ] || continue
+    if [ -n "$(git -C "$PROJECT" status --porcelain -- "$f" 2>/dev/null)" ]; then
+      drifted="$drifted $f"
+    fi
+  done
+  if [ -n "$drifted" ]; then
+    git -C "$PROJECT" add -- $drifted 2>/dev/null || true
+    git -C "$PROJECT" commit --quiet \
+      -m "chore: re-bind cortex projection (auto via cortex-mount)" \
+      -m "SessionStart regenerated the host entrypoint(s) from the installed cortex identity. Auto-committed under CORTEX_REBIND_AUTOCOMMIT; not pushed." \
+      -- $drifted 2>/dev/null || true
+  fi
+fi
+
+# 5. expose plugin tools to the consumer at a stable, repo-relative path -------------------------
+# Shipped runtime helpers live in the plugin's tools/. A consumer's agent shell has no env var
+# pointing at the plugin (COPILOT_PLUGIN_ROOT is set only at hook time), so symlink each tool into
+# `.cortex/bin/` inside the repo. The links target the machine-specific install path, so they are
+# kept OUT of git (regenerated every session) — the agent invokes `.cortex/bin/<tool>`.
+if [ -d "$PLUGIN_ROOT/tools" ]; then
+  mkdir -p "$PROJECT/.cortex/bin"
+  for tool in "$PLUGIN_ROOT"/tools/*; do
+    [ -f "$tool" ] && [ -x "$tool" ] || continue
+    link="$PROJECT/.cortex/bin/$(basename "$tool")"
+    temporary="$link.$$"
+    rm -f "$temporary"
+    ln -s "$tool" "$temporary" && mv -f "$temporary" "$link"
+  done
+  # Never commit runtime state, local audit evidence, or the raw-memory retrieval sidecar.
+  ignore_file="$PROJECT/.gitignore"
+  if [ -s "$ignore_file" ] && [ -n "$(tail -c 1 "$ignore_file" 2>/dev/null || true)" ]; then
+    printf '\n' >> "$ignore_file"
+  fi
+  for ignored in \
+    '.cortex/' \
+    'memory/cortex-index.db' \
+    'memory/cortex-index.db-*' \
+    'memory/.cortex-index.db.lock' \
+    'memory/.cortex-index.db.*.tmp'
+  do
+    if [ ! -f "$ignore_file" ] ||
+       ! grep -qxF "$ignored" "$ignore_file"; then
+      printf '%s\n' "$ignored" >> "$ignore_file"
+    fi
+  done
+fi
+
+# 6. ensure the local retrieval projection — cold-start ready, fail-open, never downloads --------
+INDEX="$PLUGIN_ROOT/tools/recall-index"
+if [ -x "$INDEX" ] && [ -d "$PROJECT/memory" ]; then
+  if ! CORTEX_MEMORY_DIR="$PROJECT/memory" \
+    CORTEX_EVENT_REPO_ROOT="$PROJECT" \
+    "$INDEX" ensure --json >/dev/null; then
+    printf 'cortex-mount: recall index ensure failed; recall will use grep\n' >&2
+  fi
+fi
+
+# 7. version pin + delta — make a version change visible, never silent ---------------------------
+# Reconcile the installed plugin version (from the payload's plugin.json) with the consumer's
+# `.cortex-version` pin. On a change, roll the old value into `.cortex-version.previous` (the rollback
+# anchor RELEASING.md points at) and print the delta to stderr. The pin file is the durable,
+# inspectable "what version this repo runs" record; the print is the never-silent nicety. Both the pin
+# and `.previous` are plain one-line files the operator commits as the declared/rollback anchors.
+# Fail-open throughout: any parse or IO problem skips silently — a version note must never block a
+# launch. Printed to stderr (a human-facing diagnostic), never stdout, so it can't leak into context.
+ver="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PLUGIN_ROOT/plugin.json" 2>/dev/null | head -1 || true)"
+if [ -n "$ver" ]; then
+  pinfile="$PROJECT/.cortex-version"
+  prevfile="$PROJECT/.cortex-version.previous"
+  if [ -f "$pinfile" ]; then
+    pinned="$(head -1 "$pinfile" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [ -n "$pinned" ] && [ "$pinned" != "$ver" ]; then
+      printf '%s\n' "$pinned" > "$prevfile" 2>/dev/null || true
+      printf '%s\n' "$ver" > "$pinfile" 2>/dev/null || true
+      printf 'cortex %s (was %s) — see CHANGELOG.md; roll back per RELEASING.md\n' "$ver" "$pinned" >&2
+    fi
+  else
+    # first run in this consumer: establish the pin and name the version once
+    printf '%s\n' "$ver" > "$pinfile" 2>/dev/null || true
+    printf 'cortex %s (pinned)\n' "$ver" >&2
+  fi
+fi
+
+if [ -n "$phase_hook_output" ]; then
+  printf '%s\n' "$phase_hook_output"
+fi
+
+exit 0
