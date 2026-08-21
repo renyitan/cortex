@@ -9,7 +9,6 @@ import type {
   CurateRequest,
   ExecutionTelemetry,
   MemoryCandidate,
-  MemoryRetriever,
   MemoryRecord,
   Phase,
   PhaseExecution,
@@ -25,14 +24,18 @@ import type {
   WorkPayload,
   WorkRequest,
 } from "./types.js";
-import { AllActiveMemoryRetriever } from "./memory-retriever.js";
 
 export interface LifecycleRunProgress {
   runId: string;
   task: string;
-  retrieval: SessionRunResult["retrieval"];
+  mountedMemory: readonly MemoryRecord[];
   wake?: WakePayload;
   work?: WorkPayload;
+}
+
+export interface LifecycleSessionOptions {
+  mountedMemory: readonly MemoryRecord[];
+  curate?: boolean;
 }
 
 export class LifecycleRunError extends Error {
@@ -111,29 +114,58 @@ function validateWake(payload: PhasePayload, memory: readonly MemoryRecord[]): W
   return payload;
 }
 
-function validateRetrieval(
-  result: Awaited<ReturnType<MemoryRetriever["retrieve"]>>,
-  memory: readonly MemoryRecord[],
-): void {
-  if (result.strategy.trim().length === 0) {
-    throw new Error("retrieval strategy must not be empty");
-  }
-  requireDistinct(
-    result.candidates.map((candidate) => candidate.memoryId),
-    "retrieval.candidates.memoryId",
+function sameMemoryRecord(
+  left: MemoryRecord,
+  right: MemoryRecord,
+): boolean {
+  return (
+    left.id === right.id &&
+    left.kind === right.kind &&
+    left.text === right.text &&
+    left.evidence === right.evidence &&
+    left.source === right.source &&
+    left.status === right.status &&
+    left.createdAt === right.createdAt &&
+    left.updatedAt === right.updatedAt
   );
-  const activeIds = new Set(memory.map((record) => record.id));
-  const unknown = result.candidates
-    .map((candidate) => candidate.memoryId)
-    .filter((memoryId) => !activeIds.has(memoryId));
+}
+
+function validateMountedMemory(
+  mountedMemory: readonly MemoryRecord[],
+  storedMemory: readonly MemoryRecord[],
+): MemoryRecord[] {
+  requireDistinct(
+    mountedMemory.map((record) => record.id),
+    "mountedMemory.id",
+  );
+  const activeMemory = storedMemory.filter((record) => record.status === "active");
+  const activeById = new Map(activeMemory.map((record) => [record.id, record]));
+  const unknown = mountedMemory
+    .map((record) => record.id)
+    .filter((recordId) => !activeById.has(recordId));
   if (unknown.length > 0) {
     throw new Error(
-      `retrieval returned unknown active memory: ${[...new Set(unknown)].join(", ")}`,
+      `mountedMemory contains records outside the active store: ${unknown.join(", ")}`,
     );
   }
-  if (result.candidates.some((candidate) => !Number.isFinite(candidate.score))) {
-    throw new Error("retrieval candidate scores must be finite");
+  const mountedIds = new Set(mountedMemory.map((record) => record.id));
+  const omitted = activeMemory
+    .map((record) => record.id)
+    .filter((recordId) => !mountedIds.has(recordId));
+  if (omitted.length > 0) {
+    throw new Error(
+      `mountedMemory must contain every active record: ${omitted.join(", ")}`,
+    );
   }
+  for (const mounted of mountedMemory) {
+    const stored = activeById.get(mounted.id);
+    if (!stored || !sameMemoryRecord(mounted, stored)) {
+      throw new Error(
+        `mountedMemory must preserve the stored record exactly: ${mounted.id}`,
+      );
+    }
+  }
+  return structuredClone(activeMemory);
 }
 
 function validateWork(payload: PhasePayload): WorkPayload {
@@ -218,52 +250,33 @@ export class LifecycleController {
     private readonly sink: EventSink = new NullEventSink(),
     private readonly now: () => Date = () => new Date(),
     private readonly idFactory: () => string = randomUUID,
-    private readonly retriever: MemoryRetriever = new AllActiveMemoryRetriever(),
   ) {}
 
-  async runSession(task: string, options: { curate?: boolean } = {}): Promise<SessionRunResult> {
+  async runSession(
+    task: string,
+    options: LifecycleSessionOptions,
+  ): Promise<SessionRunResult> {
     if (task.trim().length === 0) throw new Error("task must not be empty");
 
     this.sequence = 0;
     const runId = this.idFactory();
     const receipts: PhaseReceipt[] = [];
     const memoryBeforeRun = await this.store.snapshot();
-    const memoryAtWake = memoryBeforeRun.filter((record) => record.status === "active");
-    const retrievalStartedAt = performance.now();
-    const retrieval = await this.retriever.retrieve({
-      task,
-      memory: memoryAtWake,
-    });
-    const retrievalLatencyMs = performance.now() - retrievalStartedAt;
-    validateRetrieval(retrieval, memoryAtWake);
-    const retrievalEvidence: SessionRunResult["retrieval"] = {
-      ...structuredClone(retrieval),
-      totalActiveMemory: memoryAtWake.length,
-      latencyMs: retrievalLatencyMs,
-    };
-    const activeMemoryById = new Map(
-      memoryAtWake.map((record) => [record.id, record]),
+    const mountedMemory = validateMountedMemory(
+      options.mountedMemory,
+      memoryBeforeRun,
     );
-    const candidateMemory = retrieval.candidates.map((candidate) => {
-      const record = activeMemoryById.get(candidate.memoryId);
-      if (!record) {
-        throw new Error(
-          `retrieval candidate disappeared after validation: ${candidate.memoryId}`,
-        );
-      }
-      return record;
-    });
 
     const wakeRequest: WakeRequest = {
       phase: "wake",
       runId,
       task,
-      memory: candidateMemory,
+      memory: mountedMemory,
     };
     const wakeExecution = await this.perform(
       wakeRequest,
       receipts,
-      (payload) => validateWake(payload, candidateMemory),
+      (payload) => validateWake(payload, mountedMemory),
     ).catch((error: unknown) =>
       throwWithProgress(
         error,
@@ -272,13 +285,13 @@ export class LifecycleController {
         {
           runId,
           task,
-          retrieval: retrievalEvidence,
+          mountedMemory,
         },
       ),
     );
     const wake = wakeExecution.payload;
     const recalledIds = new Set(wake.selectedMemoryIds);
-    const recalledMemory = candidateMemory.filter((record) =>
+    const recalledMemory = mountedMemory.filter((record) =>
       recalledIds.has(record.id),
     );
 
@@ -300,7 +313,7 @@ export class LifecycleController {
         {
           runId,
           task,
-          retrieval: retrievalEvidence,
+          mountedMemory,
           wake,
         },
       ),
@@ -311,7 +324,7 @@ export class LifecycleController {
       phase: "sleep",
       runId,
       task,
-      retrievedMemory: candidateMemory,
+      mountedMemory,
       recalledMemory,
       work,
     };
@@ -339,7 +352,7 @@ export class LifecycleController {
         {
           runId,
           task,
-          retrieval: retrievalEvidence,
+          mountedMemory,
           wake,
           work,
         },
@@ -368,7 +381,6 @@ export class LifecycleController {
       runId,
       task,
       output: work.output,
-      retrieval: retrievalEvidence,
       wake,
       work,
       sleep,

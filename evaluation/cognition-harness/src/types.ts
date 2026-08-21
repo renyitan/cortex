@@ -54,7 +54,7 @@ export interface WorkRequest extends PhaseRequestBase {
 
 export interface SleepRequest extends PhaseRequestBase {
   phase: "sleep";
-  retrievedMemory: readonly MemoryRecord[];
+  mountedMemory: readonly MemoryRecord[];
   recalledMemory: readonly MemoryRecord[];
   work: WorkPayload;
 }
@@ -135,30 +135,6 @@ export interface DirectMemoryExecutor {
   ): Promise<BaselineExecution>;
 }
 
-export interface MemoryRetrievalRequest {
-  task: string;
-  memory: readonly MemoryRecord[];
-}
-
-export interface MemoryRetrievalCandidate {
-  memoryId: string;
-  score: number;
-}
-
-export interface MemoryRetrievalResult {
-  strategy: string;
-  candidates: MemoryRetrievalCandidate[];
-}
-
-export interface MemoryRetriever {
-  retrieve(request: MemoryRetrievalRequest): Promise<MemoryRetrievalResult>;
-}
-
-export interface SessionRetrievalEvidence extends MemoryRetrievalResult {
-  totalActiveMemory: number;
-  latencyMs: number;
-}
-
 export interface PhaseReceipt {
   runId: string;
   phase: Phase;
@@ -202,7 +178,6 @@ export interface SessionRunResult {
   runId: string;
   task: string;
   output: string;
-  retrieval: SessionRetrievalEvidence;
   wake: WakePayload;
   work: WorkPayload;
   sleep: SleepPayload;

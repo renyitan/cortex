@@ -8,6 +8,7 @@ import {
   LifecycleController,
   LifecycleObservationError,
   LifecycleRunError,
+  type LifecycleSessionOptions,
 } from "../src/controller.js";
 import { AtomicMemoryStore } from "../src/memory-store.js";
 import { ScriptedPhaseExecutor } from "../src/scripted-executor.js";
@@ -23,6 +24,18 @@ async function createStore(): Promise<AtomicMemoryStore> {
   const directory = await mkdtemp(join(tmpdir(), "cortex-controller-"));
   temporaryDirectories.push(directory);
   return new AtomicMemoryStore(join(directory, "memory.json"), () => new Date("2026-08-20T00:00:00.000Z"));
+}
+
+async function runBoundedSession(
+  controller: LifecycleController,
+  store: AtomicMemoryStore,
+  task: string,
+  options: Omit<LifecycleSessionOptions, "mountedMemory"> = {},
+) {
+  return controller.runSession(task, {
+    mountedMemory: await store.active(),
+    ...options,
+  });
 }
 
 test("enforces WAKE -> WORK -> SLEEP and commits only supported writes", async () => {
@@ -78,7 +91,9 @@ test("enforces WAKE -> WORK -> SLEEP and commits only supported writes", async (
     () => "run-1",
   );
 
-  const result = await controller.runSession(
+  const result = await runBoundedSession(
+    controller,
+    store,
     "For Project Ember, every release note must end with CANARY-GREEN.",
   );
 
@@ -118,7 +133,7 @@ test("rejects a WAKE receipt that names unavailable memory", async () => {
   const controller = new LifecycleController(executor, store);
 
   await assert.rejects(
-    controller.runSession("Use prior memory."),
+    runBoundedSession(controller, store, "Use prior memory."),
     (error: unknown) =>
       error instanceof LifecycleRunError &&
       error.phase === "wake" &&
@@ -158,7 +173,7 @@ test("does not write memory when SLEEP fails", async () => {
   const controller = new LifecycleController(executor, store, sink);
 
   await assert.rejects(
-    controller.runSession("Trigger a SLEEP failure."),
+    runBoundedSession(controller, store, "Trigger a SLEEP failure."),
     (error: unknown) => error instanceof LifecycleRunError && error.phase === "sleep",
   );
   assert.deepEqual(await store.snapshot(), []);
@@ -221,7 +236,7 @@ test("does not complete SLEEP when the durable commit fails", async () => {
   const controller = new LifecycleController(executor, store, sink);
 
   await assert.rejects(
-    controller.runSession("Trigger a commit failure."),
+    runBoundedSession(controller, store, "Trigger a commit failure."),
     (error: unknown) =>
       error instanceof LifecycleRunError &&
       error.phase === "sleep" &&
@@ -280,7 +295,7 @@ test("rejects SLEEP content that differs from its WORK candidate", async () => {
   const controller = new LifecycleController(executor, store);
 
   await assert.rejects(
-    controller.runSession("Reject an unsupported write."),
+    runBoundedSession(controller, store, "Reject an unsupported write."),
     (error: unknown) =>
       error instanceof LifecycleRunError &&
       error.phase === "sleep" &&
@@ -348,7 +363,7 @@ test("reports observation failure separately after a successful SLEEP commit", a
   const controller = new LifecycleController(executor, store, sink);
 
   await assert.rejects(
-    controller.runSession("Commit before telemetry fails."),
+    runBoundedSession(controller, store, "Commit before telemetry fails."),
     (error: unknown) =>
       error instanceof LifecycleObservationError &&
       error.phase === "sleep" &&
@@ -385,7 +400,7 @@ test("retains progress when phase-start observation fails", async () => {
   );
 
   await assert.rejects(
-    controller.runSession("Observe phase progress."),
+    runBoundedSession(controller, store, "Observe phase progress."),
     (error: unknown) =>
       error instanceof LifecycleRunError &&
       error.phase === "work" &&
@@ -444,8 +459,155 @@ test("CURATE proposals are recorded but never applied automatically", async () =
   ]);
   const controller = new LifecycleController(executor, store);
 
-  const result = await controller.runSession("Review memory.", { curate: true });
+  const result = await runBoundedSession(
+    controller,
+    store,
+    "Review memory.",
+    { curate: true },
+  );
 
   assert.equal(result.curate?.proposals[0]?.action, "retire");
   assert.deepEqual(await store.snapshot(), before);
+});
+
+test("mounts the complete active store without filtering or reordering it", async () => {
+  const store = await createStore();
+  await store.applyWrites([
+    {
+      candidateId: "alpha",
+      record: {
+        id: "alpha",
+        kind: "learning",
+        text: "Alpha memory.",
+        evidence: "fixture",
+        source: "observed",
+      },
+    },
+    {
+      candidateId: "beta",
+      record: {
+        id: "beta",
+        kind: "decision",
+        text: "Beta memory.",
+        evidence: "fixture",
+        source: "operator",
+      },
+    },
+  ]);
+  const executor = new ScriptedPhaseExecutor([
+    {
+      phase: "wake",
+      payload: {
+        phase: "wake",
+        selectedMemoryIds: ["beta"],
+        summary: "Selected the relevant record.",
+      },
+    },
+    {
+      phase: "work",
+      payload: {
+        phase: "work",
+        output: "Done.",
+        memoryCandidates: [],
+        summary: "Used the selected record.",
+      },
+    },
+    {
+      phase: "sleep",
+      payload: {
+        phase: "sleep",
+        writes: [],
+        summary: "No new memory.",
+      },
+    },
+  ]);
+  const controller = new LifecycleController(executor, store);
+  const mountedMemory = [...(await store.active())].reverse();
+
+  await controller.runSession("Use beta.", { mountedMemory });
+
+  assert.deepEqual(
+    executor.calls[0]?.phase === "wake"
+      ? executor.calls[0].memory.map((record) => record.id)
+      : [],
+    ["alpha", "beta"],
+  );
+  assert.deepEqual(
+    executor.calls[2]?.phase === "sleep"
+      ? executor.calls[2].mountedMemory.map((record) => record.id)
+      : [],
+    ["alpha", "beta"],
+  );
+  assert.deepEqual(
+    executor.calls[2]?.phase === "sleep"
+      ? executor.calls[2].recalledMemory.map((record) => record.id)
+      : [],
+    ["beta"],
+  );
+  executor.assertExhausted();
+});
+
+test("rejects a mounted store that omits active memory", async () => {
+  const store = await createStore();
+  await store.applyWrites([
+    {
+      candidateId: "alpha",
+      record: {
+        id: "alpha",
+        kind: "learning",
+        text: "Alpha memory.",
+        evidence: "fixture",
+        source: "observed",
+      },
+    },
+    {
+      candidateId: "beta",
+      record: {
+        id: "beta",
+        kind: "decision",
+        text: "Beta memory.",
+        evidence: "fixture",
+        source: "operator",
+      },
+    },
+  ]);
+  const executor = new ScriptedPhaseExecutor([]);
+  const controller = new LifecycleController(executor, store);
+  const [alpha] = await store.active();
+
+  await assert.rejects(
+    controller.runSession("Use memory.", {
+      mountedMemory: alpha ? [alpha] : [],
+    }),
+    /mountedMemory must contain every active record: beta/,
+  );
+  executor.assertExhausted();
+});
+
+test("rejects mounted memory whose stored content was altered", async () => {
+  const store = await createStore();
+  await store.applyWrites([
+    {
+      candidateId: "alpha",
+      record: {
+        id: "alpha",
+        kind: "learning",
+        text: "Alpha memory.",
+        evidence: "fixture",
+        source: "observed",
+      },
+    },
+  ]);
+  const executor = new ScriptedPhaseExecutor([]);
+  const controller = new LifecycleController(executor, store);
+  const [alpha] = await store.active();
+  assert.ok(alpha);
+
+  await assert.rejects(
+    controller.runSession("Use memory.", {
+      mountedMemory: [{ ...alpha, text: "Altered memory." }],
+    }),
+    /mountedMemory must preserve the stored record exactly: alpha/,
+  );
+  executor.assertExhausted();
 });

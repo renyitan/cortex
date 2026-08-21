@@ -225,16 +225,14 @@ function scoreProjectEmberCortex(
   return score;
 }
 
-async function executeProjectEmberCortex(
+async function runBoundedSession(
   controller: LifecycleController,
-): Promise<ProjectEmberCortexExecution> {
-  const learningSession = await controller.runSession(PROJECT_EMBER_LEARNING_TASK);
-  const recallSession = await controller.runSession(PROJECT_EMBER_RECALL_TASK);
-  return {
-    learningSession,
-    recallSession,
-    score: scoreProjectEmberCortex(learningSession, recallSession),
-  };
+  store: AtomicMemoryStore,
+  task: string,
+): Promise<SessionRunResult> {
+  return controller.runSession(task, {
+    mountedMemory: await store.active(),
+  });
 }
 
 export async function runProjectEmberCortexCondition(
@@ -253,8 +251,16 @@ export async function runProjectEmberCortexCondition(
   );
   let learningSession: SessionRunResult | undefined;
   try {
-    learningSession = await controller.runSession(PROJECT_EMBER_LEARNING_TASK);
-    const recallSession = await controller.runSession(PROJECT_EMBER_RECALL_TASK);
+    learningSession = await runBoundedSession(
+      controller,
+      store,
+      PROJECT_EMBER_LEARNING_TASK,
+    );
+    const recallSession = await runBoundedSession(
+      controller,
+      store,
+      PROJECT_EMBER_RECALL_TASK,
+    );
     return {
       learningSession,
       recallSession,
@@ -297,8 +303,16 @@ export async function runProjectEmberFixture(
       PROJECT_EMBER_RECALL_TASK,
       [PROJECT_EMBER_DIRECT_MEMORY],
     );
-    learningSession = await controller.runSession(PROJECT_EMBER_LEARNING_TASK);
-    const recallSession = await controller.runSession(PROJECT_EMBER_RECALL_TASK);
+    learningSession = await runBoundedSession(
+      controller,
+      store,
+      PROJECT_EMBER_LEARNING_TASK,
+    );
+    const recallSession = await runBoundedSession(
+      controller,
+      store,
+      PROJECT_EMBER_RECALL_TASK,
+    );
     const cortexScore = scoreProjectEmberCortex(
       learningSession,
       recallSession,

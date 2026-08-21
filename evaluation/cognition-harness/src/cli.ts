@@ -22,11 +22,6 @@ import {
 } from "./pi-executor.js";
 import { JsonlPiTraceSink } from "./pi-trace.js";
 import {
-  loadLongMemEvalPilot,
-  prepareLongMemEvalPilot,
-} from "./longmemeval-dataset.js";
-import { runLongMemEvalPilot } from "./longmemeval-runner.js";
-import {
   projectEmberTrialId,
   runProjectEmberBatch,
 } from "./project-ember-batch.js";
@@ -63,8 +58,6 @@ Usage:
   npm run harness -- models list
   npm run harness -- fixture run [--model gpt-5-mini] [--thinking low] [--runs-dir <path>]
   npm run harness -- fixture batch --trials <count> [--model gpt-5-mini] [--thinking low] [--runs-dir <path>]
-  npm run harness -- benchmark prepare longmemeval --history <path> --oracle <path> --output <path> [--items-per-stratum 3] [--seed <text>]
-  npm run harness -- benchmark run longmemeval --prepared <path> [--question-id <id>] [--retrieval-limit 10] [--model gpt-5-mini] [--thinking low] [--runs-dir <path>]
 
 Environment:
   CORTEX_HARNESS_AUTH_FILE  Override the external credential file
@@ -217,136 +210,6 @@ function positiveIntegerOption(args: readonly string[], name: string): number {
   return value;
 }
 
-function requiredOption(args: readonly string[], name: string): string {
-  const value = option(args, name);
-  if (value === undefined) throw new Error(`${name} is required`);
-  return value;
-}
-
-async function benchmarkCommand(args: readonly string[]): Promise<void> {
-  const [action, benchmark] = args;
-  if (benchmark !== "longmemeval") {
-    throw new Error("usage: benchmark prepare|run longmemeval [options]");
-  }
-  if (action === "prepare") {
-    const rawItemsPerStratum = option(args, "--items-per-stratum") ?? "3";
-    const itemsPerStratum = Number(rawItemsPerStratum);
-    if (!Number.isInteger(itemsPerStratum) || itemsPerStratum < 1) {
-      throw new Error("--items-per-stratum must be a positive integer");
-    }
-    const manifest = await prepareLongMemEvalPilot({
-      historyPath: requiredOption(args, "--history"),
-      oraclePath: requiredOption(args, "--oracle"),
-      outputDirectory: requiredOption(args, "--output"),
-      itemsPerStratum,
-      seed: option(args, "--seed") ?? "cortex-longmemeval-pilot-v1",
-    });
-    console.log(`Prepared ${manifest.items.length} fixed LongMemEval items.`);
-    console.log(`History SHA-256: ${manifest.historySource.sha256}`);
-    console.log(`Oracle SHA-256: ${manifest.oracleSource.sha256}`);
-    return;
-  }
-  if (action !== "run") {
-    throw new Error("usage: benchmark prepare|run longmemeval [options]");
-  }
-
-  const modelId = option(args, "--model") ?? "gpt-5-mini";
-  const thinking = option(args, "--thinking") ?? "low";
-  if (!isThinkingLevel(thinking)) {
-    throw new Error(`invalid thinking level: ${thinking}`);
-  }
-  const retrievalLimit = Number(option(args, "--retrieval-limit") ?? "10");
-  if (!Number.isInteger(retrievalLimit) || retrievalLimit < 1) {
-    throw new Error("--retrieval-limit must be a positive integer");
-  }
-  const loadedPrepared = await loadLongMemEvalPilot(
-    requiredOption(args, "--prepared"),
-  );
-  const questionId = option(args, "--question-id");
-  const prepared = questionId
-    ? {
-        ...loadedPrepared,
-        items: loadedPrepared.items.filter(
-          (item) => item.history.question_id === questionId,
-        ),
-      }
-    : loadedPrepared;
-  if (prepared.items.length === 0) {
-    if (questionId) {
-      throw new Error(`prepared LongMemEval pilot has no question ${questionId}`);
-    }
-    throw new Error("prepared LongMemEval pilot contains no items");
-  }
-  const runsRoot = resolve(option(args, "--runs-dir") ?? DEFAULT_RUNS_ROOT);
-  const artifactDirectory = runDirectory(runsRoot);
-  await mkdir(artifactDirectory, { recursive: true, mode: 0o700 });
-  const credentials = new PrivateFileCredentialStore();
-  const source = new CortexSourceLoader();
-  const firstQuestionId = prepared.items[0]!.history.question_id;
-  const firstRuntime = await createGitHubCopilotRuntime({
-    credentials,
-    modelId,
-    thinkingLevel: thinking,
-    trace: new JsonlPiTraceSink(
-      join(
-        artifactDirectory,
-        "items",
-        firstQuestionId,
-        "agent-trace.jsonl",
-      ),
-    ),
-    source,
-    fixture: `longmemeval:${firstQuestionId}`,
-  });
-  const report = await runLongMemEvalPilot({
-    prepared,
-    artifactDirectory,
-    retrievalLimit,
-    async createExecutors(context) {
-      if (context.itemNumber === 1) return firstRuntime;
-      const runtime = await createGitHubCopilotRuntime({
-        credentials,
-        modelId,
-        thinkingLevel: thinking,
-        trace: new JsonlPiTraceSink(
-          join(context.artifactDirectory, "agent-trace.jsonl"),
-        ),
-        source,
-        fixture: `longmemeval:${context.questionId}`,
-      });
-      if (runtime.model.id !== firstRuntime.model.id) {
-        throw new Error(
-          `resolved model changed during the run: ${firstRuntime.model.id} -> ${runtime.model.id}`,
-        );
-      }
-      return runtime;
-    },
-    model: {
-      provider: PROVIDER,
-      requestedId: modelId,
-      resolvedId: firstRuntime.model.id,
-      thinkingLevel: thinking,
-    },
-    source: await source.manifest(),
-    repository: await repositoryState(source.repositoryRoot),
-  });
-  console.log(
-    `Artifacts: ${relative(process.cwd(), artifactDirectory) || artifactDirectory}`,
-  );
-  for (const [condition, aggregate] of Object.entries(report.conditions)) {
-    console.log(
-      `${condition}: ${aggregate.completed}/${aggregate.items} completed, ${aggregate.errors} errors, $${aggregate.telemetry.usage.costUsd.toFixed(6)}`,
-    );
-  }
-  console.log(
-    `Cortex candidate full recall: ${report.retrieval.candidateFullRecall}/${report.retrieval.answerableCandidateItemsEvaluated}`,
-  );
-  console.log(
-    "Answer outputs are diagnostic only until scored with the official LongMemEval evaluator.",
-  );
-  if (report.status === "completed-with-errors") process.exitCode = 1;
-}
-
 async function fixtureCommand(args: readonly string[]): Promise<void> {
   const action = args[0];
   if (action !== "run" && action !== "batch") {
@@ -481,7 +344,6 @@ async function main(): Promise<void> {
   }
   if (command === "auth") return authCommand(args);
   if (command === "models") return modelsCommand(args);
-  if (command === "benchmark") return benchmarkCommand(args);
   if (command === "fixture") return fixtureCommand(args);
   throw new Error(`unknown command: ${command}`);
 }
