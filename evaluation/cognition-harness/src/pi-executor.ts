@@ -254,6 +254,7 @@ function phaseGuidance(phase: Phase): string {
       return [
         "Complete the task using only the supplied task and recalled memory.",
         "Capture a small memory candidate only for an explicit durable fact, decision, or demonstrated learning.",
+        "Merely applying an already-recalled rule is not a new candidate and must not be logged as one.",
         "Do not invent evidence.",
       ].join(" ");
     case "sleep":
@@ -261,6 +262,7 @@ function phaseGuidance(phase: Phase): string {
         "Review the completed WORK result and its candidates.",
         "The isolated evaluation store is authorized for non-lossy writes from those candidates only.",
         "A write must preserve its candidate ID, kind, text, evidence, and source exactly.",
+        "Do not persist action logs, restatements, or candidates already covered by existing memory.",
         "Never replace an existing record. Use each candidate at most once; an empty write list is valid.",
       ].join(" ");
     case "curate":

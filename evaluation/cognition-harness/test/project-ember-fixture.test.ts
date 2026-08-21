@@ -117,6 +117,9 @@ test("scores the stateless baseline against two enforced Cortex sessions", async
     wakeRecalledMarker: true,
     workTaskCorrect: true,
     workAppliedMarker: true,
+    workAvoidedRedundantCandidate: true,
+    sleepAvoidedRedundantWrite: true,
+    memoryPrecisionPreserved: true,
     passed: true,
   });
   assert.equal((await stat(join(directory, "report.json"))).mode & 0o777, 0o600);

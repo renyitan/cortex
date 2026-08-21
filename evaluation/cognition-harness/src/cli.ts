@@ -238,6 +238,15 @@ async function fixtureCommand(args: readonly string[]): Promise<void> {
   console.log(`WAKE recalled marker: ${report.score.wakeRecalledMarker ? "yes" : "no"}`);
   console.log(`WORK task correct: ${report.score.workTaskCorrect ? "yes" : "no"}`);
   console.log(`WORK applied marker: ${report.score.workAppliedMarker ? "yes" : "no"}`);
+  console.log(
+    `WORK avoided redundant candidate: ${report.score.workAvoidedRedundantCandidate ? "yes" : "no"}`,
+  );
+  console.log(
+    `SLEEP avoided redundant write: ${report.score.sleepAvoidedRedundantWrite ? "yes" : "no"}`,
+  );
+  console.log(
+    `Memory precision preserved: ${report.score.memoryPrecisionPreserved ? "yes" : "no"}`,
+  );
   console.log(`Result: ${report.score.passed ? "PASS" : "FAIL"}`);
   if (!report.score.passed) process.exitCode = 1;
 }

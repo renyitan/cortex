@@ -16,7 +16,7 @@ import type {
   SessionRunResult,
 } from "./types.js";
 
-export const PROJECT_EMBER_FIXTURE_ID = "project-ember-release-marker-v2";
+export const PROJECT_EMBER_FIXTURE_ID = "project-ember-release-marker-v3";
 export const PROJECT_EMBER_MARKER = "CANARY-GREEN";
 export const PROJECT_EMBER_RELEASE_NOTE = "Project Ember now starts faster.";
 export const PROJECT_EMBER_EXPECTED_OUTPUT =
@@ -51,6 +51,9 @@ export interface ProjectEmberScore {
   wakeRecalledMarker: boolean;
   workTaskCorrect: boolean;
   workAppliedMarker: boolean;
+  workAvoidedRedundantCandidate: boolean;
+  sleepAvoidedRedundantWrite: boolean;
+  memoryPrecisionPreserved: boolean;
   passed: boolean;
 }
 
@@ -136,6 +139,8 @@ export async function runProjectEmberFixture(
         )
         .map((record) => record.id),
     );
+    const learningMemory = JSON.stringify(learningSession.memory);
+    const recalledMemory = JSON.stringify(recallSession.memory);
     const score: ProjectEmberScore = {
       baselineTaskCorrect: baseline.output.trim() === PROJECT_EMBER_RELEASE_NOTE,
       baselineMarkerAbsent: !endsWithExactMarker(baseline.output),
@@ -145,6 +150,10 @@ export async function runProjectEmberFixture(
       ),
       workTaskCorrect: recallSession.output.trim() === PROJECT_EMBER_EXPECTED_OUTPUT,
       workAppliedMarker: endsWithExactMarker(recallSession.output),
+      workAvoidedRedundantCandidate:
+        recallSession.work.memoryCandidates.length === 0,
+      sleepAvoidedRedundantWrite: recallSession.sleep.writes.length === 0,
+      memoryPrecisionPreserved: learningMemory === recalledMemory,
       passed: false,
     };
     score.passed =
@@ -153,7 +162,10 @@ export async function runProjectEmberFixture(
       score.sleepPersistedMarker &&
       score.wakeRecalledMarker &&
       score.workTaskCorrect &&
-      score.workAppliedMarker;
+      score.workAppliedMarker &&
+      score.workAvoidedRedundantCandidate &&
+      score.sleepAvoidedRedundantWrite &&
+      score.memoryPrecisionPreserved;
 
     const report: ProjectEmberReport = {
       schemaVersion: 1,
