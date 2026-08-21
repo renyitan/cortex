@@ -128,6 +128,37 @@ export interface BaselineExecutor {
   execute(task: string): Promise<BaselineExecution>;
 }
 
+export interface DirectMemoryExecutor {
+  execute(
+    task: string,
+    memory: readonly MemoryDraft[],
+  ): Promise<BaselineExecution>;
+}
+
+export interface MemoryRetrievalRequest {
+  task: string;
+  memory: readonly MemoryRecord[];
+}
+
+export interface MemoryRetrievalCandidate {
+  memoryId: string;
+  score: number;
+}
+
+export interface MemoryRetrievalResult {
+  strategy: string;
+  candidates: MemoryRetrievalCandidate[];
+}
+
+export interface MemoryRetriever {
+  retrieve(request: MemoryRetrievalRequest): Promise<MemoryRetrievalResult>;
+}
+
+export interface SessionRetrievalEvidence extends MemoryRetrievalResult {
+  totalActiveMemory: number;
+  latencyMs: number;
+}
+
 export interface PhaseReceipt {
   runId: string;
   phase: Phase;
@@ -171,6 +202,7 @@ export interface SessionRunResult {
   runId: string;
   task: string;
   output: string;
+  retrieval: SessionRetrievalEvidence;
   wake: WakePayload;
   work: WorkPayload;
   sleep: SleepPayload;

@@ -7,7 +7,11 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
 import { PiAgentRunError, PiAgentRunner } from "../src/pi-agent-runner.js";
-import { PiBaselineExecutor, PiPhaseExecutor } from "../src/pi-executor.js";
+import {
+  PiBaselineExecutor,
+  PiDirectMemoryExecutor,
+  PiPhaseExecutor,
+} from "../src/pi-executor.js";
 
 function source() {
   return {
@@ -84,4 +88,42 @@ test("Pi runner bounds attempts when the model never submits a receipt", async (
       error.telemetry.turns === 2,
   );
   assert.equal(faux.state.callCount, 2);
+});
+
+test("Pi direct-memory executor completes the task with supplied memory", async () => {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall("submit_baseline", {
+        output: "Project Ember now starts faster. CANARY-GREEN",
+        summary: "Applied the supplied release-note convention.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+  ]);
+  const runner = new PiAgentRunner({
+    models,
+    model: faux.getModel(),
+    maxAttempts: 1,
+  });
+  const directMemory = new PiDirectMemoryExecutor(runner, "test");
+
+  const execution = await directMemory.execute("Write the release note.", [
+    {
+      id: "ember-marker",
+      kind: "decision",
+      text: "Project Ember release notes end with CANARY-GREEN.",
+      evidence: "operator instruction",
+      source: "operator",
+    },
+  ]);
+
+  assert.equal(
+    execution.output,
+    "Project Ember now starts faster. CANARY-GREEN",
+  );
+  assert.equal(execution.telemetry.turns, 1);
+  assert.equal(faux.getPendingResponseCount(), 0);
 });

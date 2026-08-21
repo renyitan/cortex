@@ -1,7 +1,9 @@
 import type {
   BaselineExecution,
   BaselineExecutor,
+  DirectMemoryExecutor,
   ExecutionTelemetry,
+  MemoryDraft,
   Phase,
   PhaseExecution,
   PhaseExecutor,
@@ -62,6 +64,30 @@ export class ScriptedBaselineExecutor implements BaselineExecutor {
   assertExhausted(): void {
     if (this.outputs.length > 0) {
       throw new Error(`${this.outputs.length} scripted baseline outputs were not used`);
+    }
+  }
+}
+
+export class ScriptedDirectMemoryExecutor implements DirectMemoryExecutor {
+  readonly calls: { task: string; memory: readonly MemoryDraft[] }[] = [];
+
+  constructor(private readonly outputs: string[]) {}
+
+  async execute(
+    task: string,
+    memory: readonly MemoryDraft[],
+  ): Promise<BaselineExecution> {
+    this.calls.push({ task, memory: structuredClone(memory) });
+    const output = this.outputs.shift();
+    if (output === undefined) throw new Error("no scripted direct-memory response");
+    return { output, telemetry: emptyTelemetry() };
+  }
+
+  assertExhausted(): void {
+    if (this.outputs.length > 0) {
+      throw new Error(
+        `${this.outputs.length} scripted direct-memory outputs were not used`,
+      );
     }
   }
 }

@@ -122,6 +122,7 @@ test("rejects a WAKE receipt that names unavailable memory", async () => {
     (error: unknown) =>
       error instanceof LifecycleRunError &&
       error.phase === "wake" &&
+      error.currentTelemetry?.attempts === 1 &&
       error.message.includes("unknown memory"),
   );
   assert.deepEqual(await store.snapshot(), []);

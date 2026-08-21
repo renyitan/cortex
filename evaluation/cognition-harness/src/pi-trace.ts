@@ -6,7 +6,7 @@ import type {
 } from "@earendil-works/pi-ai";
 
 export interface PiTraceContext {
-  condition: "baseline" | "cortex";
+  condition: "baseline" | "direct-memory" | "cortex";
   fixture: string;
   runId?: string;
   phase?: string;

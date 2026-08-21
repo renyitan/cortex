@@ -4,4 +4,5 @@ __pycache__/
 *.pyc
 .cortex/
 evaluation/cognition-harness/runs/
+evaluation/cognition-harness/data/
 evaluation/cognition-harness/auth.json

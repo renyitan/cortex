@@ -7,7 +7,9 @@ import { AtomicMemoryStore } from "./memory-store.js";
 import type {
   CuratePayload,
   CurateRequest,
+  ExecutionTelemetry,
   MemoryCandidate,
+  MemoryRetriever,
   MemoryRecord,
   Phase,
   PhaseExecution,
@@ -23,6 +25,7 @@ import type {
   WorkPayload,
   WorkRequest,
 } from "./types.js";
+import { AllActiveMemoryRetriever } from "./memory-retriever.js";
 
 export class LifecycleRunError extends Error {
   constructor(
@@ -30,6 +33,7 @@ export class LifecycleRunError extends Error {
     readonly phase: Phase,
     readonly receipts: readonly PhaseReceipt[],
     cause: unknown,
+    readonly currentTelemetry?: ExecutionTelemetry,
   ) {
     super(`Cortex ${phase.toUpperCase()} failed: ${errorMessage(cause)}`, { cause });
     this.name = "LifecycleRunError";
@@ -42,6 +46,7 @@ export class LifecycleObservationError extends Error {
     readonly phase: Phase,
     readonly receipts: readonly PhaseReceipt[],
     cause: unknown,
+    readonly currentTelemetry?: ExecutionTelemetry,
   ) {
     super(
       `Cortex ${phase.toUpperCase()} committed its durable effect, but observation failed: ${errorMessage(cause)}`,
@@ -69,6 +74,31 @@ function validateWake(payload: PhasePayload, memory: readonly MemoryRecord[]): W
   const unknown = payload.selectedMemoryIds.filter((id) => !activeIds.has(id));
   if (unknown.length > 0) throw new Error(`WAKE selected unknown memory: ${unknown.join(", ")}`);
   return payload;
+}
+
+function validateRetrieval(
+  result: Awaited<ReturnType<MemoryRetriever["retrieve"]>>,
+  memory: readonly MemoryRecord[],
+): void {
+  if (result.strategy.trim().length === 0) {
+    throw new Error("retrieval strategy must not be empty");
+  }
+  requireDistinct(
+    result.candidates.map((candidate) => candidate.memoryId),
+    "retrieval.candidates.memoryId",
+  );
+  const activeIds = new Set(memory.map((record) => record.id));
+  const unknown = result.candidates
+    .map((candidate) => candidate.memoryId)
+    .filter((memoryId) => !activeIds.has(memoryId));
+  if (unknown.length > 0) {
+    throw new Error(
+      `retrieval returned unknown active memory: ${[...new Set(unknown)].join(", ")}`,
+    );
+  }
+  if (result.candidates.some((candidate) => !Number.isFinite(candidate.score))) {
+    throw new Error("retrieval candidate scores must be finite");
+  }
 }
 
 function validateWork(payload: PhasePayload): WorkPayload {
@@ -153,6 +183,7 @@ export class LifecycleController {
     private readonly sink: EventSink = new NullEventSink(),
     private readonly now: () => Date = () => new Date(),
     private readonly idFactory: () => string = randomUUID,
+    private readonly retriever: MemoryRetriever = new AllActiveMemoryRetriever(),
   ) {}
 
   async runSession(task: string, options: { curate?: boolean } = {}): Promise<SessionRunResult> {
@@ -163,16 +194,42 @@ export class LifecycleController {
     const receipts: PhaseReceipt[] = [];
     const memoryBeforeRun = await this.store.snapshot();
     const memoryAtWake = memoryBeforeRun.filter((record) => record.status === "active");
+    const retrievalStartedAt = performance.now();
+    const retrieval = await this.retriever.retrieve({
+      task,
+      memory: memoryAtWake,
+    });
+    const retrievalLatencyMs = performance.now() - retrievalStartedAt;
+    validateRetrieval(retrieval, memoryAtWake);
+    const activeMemoryById = new Map(
+      memoryAtWake.map((record) => [record.id, record]),
+    );
+    const candidateMemory = retrieval.candidates.map((candidate) => {
+      const record = activeMemoryById.get(candidate.memoryId);
+      if (!record) {
+        throw new Error(
+          `retrieval candidate disappeared after validation: ${candidate.memoryId}`,
+        );
+      }
+      return record;
+    });
 
-    const wakeRequest: WakeRequest = { phase: "wake", runId, task, memory: memoryAtWake };
+    const wakeRequest: WakeRequest = {
+      phase: "wake",
+      runId,
+      task,
+      memory: candidateMemory,
+    };
     const wakeExecution = await this.perform(
       wakeRequest,
       receipts,
-      (payload) => validateWake(payload, memoryAtWake),
+      (payload) => validateWake(payload, candidateMemory),
     );
     const wake = wakeExecution.payload;
     const recalledIds = new Set(wake.selectedMemoryIds);
-    const recalledMemory = memoryAtWake.filter((record) => recalledIds.has(record.id));
+    const recalledMemory = candidateMemory.filter((record) =>
+      recalledIds.has(record.id),
+    );
 
     const workRequest: WorkRequest = {
       phase: "work",
@@ -231,6 +288,11 @@ export class LifecycleController {
       runId,
       task,
       output: work.output,
+      retrieval: {
+        ...structuredClone(retrieval),
+        totalActiveMemory: memoryAtWake.length,
+        latencyMs: retrievalLatencyMs,
+      },
       wake,
       work,
       sleep,
@@ -270,8 +332,10 @@ export class LifecycleController {
     });
 
     let durableEffectApplied = false;
+    let currentTelemetry: ExecutionTelemetry | undefined;
     try {
       const execution = await this.executor.execute(request);
+      currentTelemetry = execution.telemetry;
       if (execution.payload.phase !== request.phase) {
         throw new Error(`executor returned ${execution.payload.phase} during ${request.phase}`);
       }
@@ -301,6 +365,7 @@ export class LifecycleController {
           request.phase,
           structuredClone(receipts),
           error,
+          currentTelemetry,
         );
       }
       try {
@@ -321,6 +386,7 @@ export class LifecycleController {
             [error, observationError],
             "phase failure and failure observation both failed",
           ),
+          currentTelemetry,
         );
       }
       throw new LifecycleRunError(
@@ -328,6 +394,7 @@ export class LifecycleController {
         request.phase,
         structuredClone(receipts),
         error,
+        currentTelemetry,
       );
     }
   }

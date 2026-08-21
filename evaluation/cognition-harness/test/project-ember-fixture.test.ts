@@ -11,6 +11,7 @@ import {
 } from "../src/project-ember-fixture.js";
 import {
   ScriptedBaselineExecutor,
+  ScriptedDirectMemoryExecutor,
   ScriptedPhaseExecutor,
 } from "../src/scripted-executor.js";
 
@@ -26,6 +27,9 @@ test("scores the stateless baseline against two enforced Cortex sessions", async
   const directory = await mkdtemp(join(tmpdir(), "cortex-ember-fixture-"));
   temporaryDirectories.push(directory);
   const baseline = new ScriptedBaselineExecutor([PROJECT_EMBER_RELEASE_NOTE]);
+  const directMemory = new ScriptedDirectMemoryExecutor([
+    PROJECT_EMBER_EXPECTED_OUTPUT,
+  ]);
   const phases = new ScriptedPhaseExecutor([
     {
       phase: "wake",
@@ -98,6 +102,7 @@ test("scores the stateless baseline against two enforced Cortex sessions", async
     artifactDirectory: directory,
     phaseExecutor: phases,
     baselineExecutor: baseline,
+    directMemoryExecutor: directMemory,
     model: {
       provider: "scripted",
       requestedId: "scripted",
@@ -113,6 +118,8 @@ test("scores the stateless baseline against two enforced Cortex sessions", async
   assert.deepEqual(report.score, {
     baselineTaskCorrect: true,
     baselineMarkerAbsent: true,
+    directMemoryTaskCorrect: true,
+    directMemoryAppliedMarker: true,
     sleepPersistedMarker: true,
     wakeRecalledMarker: true,
     workTaskCorrect: true,
@@ -133,6 +140,7 @@ test("scores the stateless baseline against two enforced Cortex sessions", async
     [1, 2, 3],
   );
   baseline.assertExhausted();
+  directMemory.assertExhausted();
   phases.assertExhausted();
 });
 
@@ -140,6 +148,9 @@ test("preserves completed baseline and phase evidence when a run fails", async (
   const directory = await mkdtemp(join(tmpdir(), "cortex-ember-fixture-"));
   temporaryDirectories.push(directory);
   const baseline = new ScriptedBaselineExecutor(["Stateless result."]);
+  const directMemory = new ScriptedDirectMemoryExecutor([
+    PROJECT_EMBER_EXPECTED_OUTPUT,
+  ]);
   const phases = new ScriptedPhaseExecutor([
     {
       phase: "wake",
@@ -156,6 +167,7 @@ test("preserves completed baseline and phase evidence when a run fails", async (
       artifactDirectory: directory,
       phaseExecutor: phases,
       baselineExecutor: baseline,
+      directMemoryExecutor: directMemory,
       model: {
         provider: "scripted",
         requestedId: "scripted",
@@ -173,11 +185,16 @@ test("preserves completed baseline and phase evidence when a run fails", async (
     durableEffectApplied: boolean;
     baseline: { output: string };
     receipts: unknown[];
+    telemetry: { attempts: number; turns: number };
+    telemetryComplete: boolean;
     memory: unknown[];
   };
   assert.equal(failure.phase, "wake");
   assert.equal(failure.durableEffectApplied, false);
   assert.equal(failure.baseline.output, "Stateless result.");
   assert.deepEqual(failure.receipts, []);
+  assert.equal(failure.telemetry.attempts, 3);
+  assert.equal(failure.telemetry.turns, 3);
+  assert.equal(failure.telemetryComplete, false);
   assert.deepEqual(failure.memory, []);
 });

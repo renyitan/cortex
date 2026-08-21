@@ -49,3 +49,37 @@ export async function writePrivateJson(path: string, value: unknown): Promise<vo
     throw error;
   }
 }
+
+export async function writePrivateJsonExclusive(
+  path: string,
+  value: unknown,
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const handle = await open(path, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await rm(path, { force: true }).catch(() => undefined);
+    throw error;
+  }
+  await handle.close();
+}
+
+export async function writePrivateTextExclusive(
+  path: string,
+  value: string,
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const handle = await open(path, "wx", 0o600);
+  try {
+    await handle.writeFile(value, "utf8");
+    await handle.sync();
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await rm(path, { force: true }).catch(() => undefined);
+    throw error;
+  }
+  await handle.close();
+}
