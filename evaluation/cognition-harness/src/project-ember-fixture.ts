@@ -16,12 +16,15 @@ import type {
   SessionRunResult,
 } from "./types.js";
 
-export const PROJECT_EMBER_FIXTURE_ID = "project-ember-release-marker-v1";
+export const PROJECT_EMBER_FIXTURE_ID = "project-ember-release-marker-v2";
 export const PROJECT_EMBER_MARKER = "CANARY-GREEN";
+export const PROJECT_EMBER_RELEASE_NOTE = "Project Ember now starts faster.";
+export const PROJECT_EMBER_EXPECTED_OUTPUT =
+  `${PROJECT_EMBER_RELEASE_NOTE} ${PROJECT_EMBER_MARKER}`;
 export const PROJECT_EMBER_LEARNING_TASK =
   "For Project Ember, adopt this durable release-note convention: every release note must end with the exact marker CANARY-GREEN. Acknowledge the convention.";
 export const PROJECT_EMBER_RECALL_TASK =
-  "Write one sentence of release notes for Project Ember announcing faster startup. Follow all established Project Ember conventions.";
+  `Return this release note verbatim, adding only any established Project Ember convention required at the end: ${PROJECT_EMBER_RELEASE_NOTE}`;
 
 export interface ProjectEmberFixtureOptions {
   artifactDirectory: string;
@@ -42,9 +45,11 @@ export interface ProjectEmberFixtureOptions {
 }
 
 export interface ProjectEmberScore {
+  baselineTaskCorrect: boolean;
   baselineMarkerAbsent: boolean;
   sleepPersistedMarker: boolean;
   wakeRecalledMarker: boolean;
+  workTaskCorrect: boolean;
   workAppliedMarker: boolean;
   passed: boolean;
 }
@@ -132,18 +137,22 @@ export async function runProjectEmberFixture(
         .map((record) => record.id),
     );
     const score: ProjectEmberScore = {
+      baselineTaskCorrect: baseline.output.trim() === PROJECT_EMBER_RELEASE_NOTE,
       baselineMarkerAbsent: !endsWithExactMarker(baseline.output),
       sleepPersistedMarker: markerRecordIds.size > 0,
       wakeRecalledMarker: recallSession.wake.selectedMemoryIds.some((id) =>
         markerRecordIds.has(id),
       ),
+      workTaskCorrect: recallSession.output.trim() === PROJECT_EMBER_EXPECTED_OUTPUT,
       workAppliedMarker: endsWithExactMarker(recallSession.output),
       passed: false,
     };
     score.passed =
+      score.baselineTaskCorrect &&
       score.baselineMarkerAbsent &&
       score.sleepPersistedMarker &&
       score.wakeRecalledMarker &&
+      score.workTaskCorrect &&
       score.workAppliedMarker;
 
     const report: ProjectEmberReport = {

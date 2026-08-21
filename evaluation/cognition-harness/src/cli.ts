@@ -232,9 +232,11 @@ async function fixtureCommand(args: readonly string[]): Promise<void> {
   });
 
   console.log(`Artifacts: ${relative(process.cwd(), artifactDirectory) || artifactDirectory}`);
+  console.log(`Baseline task correct: ${report.score.baselineTaskCorrect ? "yes" : "no"}`);
   console.log(`Baseline marker absent: ${report.score.baselineMarkerAbsent ? "yes" : "no"}`);
   console.log(`SLEEP persisted marker: ${report.score.sleepPersistedMarker ? "yes" : "no"}`);
   console.log(`WAKE recalled marker: ${report.score.wakeRecalledMarker ? "yes" : "no"}`);
+  console.log(`WORK task correct: ${report.score.workTaskCorrect ? "yes" : "no"}`);
   console.log(`WORK applied marker: ${report.score.workAppliedMarker ? "yes" : "no"}`);
   console.log(`Result: ${report.score.passed ? "PASS" : "FAIL"}`);
   if (!report.score.passed) process.exitCode = 1;

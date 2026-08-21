@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import {
+  PROJECT_EMBER_EXPECTED_OUTPUT,
   PROJECT_EMBER_MARKER,
+  PROJECT_EMBER_RELEASE_NOTE,
   runProjectEmberFixture,
 } from "../src/project-ember-fixture.js";
 import {
@@ -23,9 +25,7 @@ afterEach(async () => {
 test("scores the stateless baseline against two enforced Cortex sessions", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cortex-ember-fixture-"));
   temporaryDirectories.push(directory);
-  const baseline = new ScriptedBaselineExecutor([
-    "Project Ember now starts faster for a smoother launch.",
-  ]);
+  const baseline = new ScriptedBaselineExecutor([PROJECT_EMBER_RELEASE_NOTE]);
   const phases = new ScriptedPhaseExecutor([
     {
       phase: "wake",
@@ -79,7 +79,7 @@ test("scores the stateless baseline against two enforced Cortex sessions", async
       phase: "work",
       payload: {
         phase: "work",
-        output: `Project Ember now starts faster for a smoother launch. ${PROJECT_EMBER_MARKER}`,
+        output: PROJECT_EMBER_EXPECTED_OUTPUT,
         summary: "Applied the recalled convention.",
         memoryCandidates: [],
       },
@@ -111,9 +111,11 @@ test("scores the stateless baseline against two enforced Cortex sessions", async
 
   assert.equal(report.status, "passed");
   assert.deepEqual(report.score, {
+    baselineTaskCorrect: true,
     baselineMarkerAbsent: true,
     sleepPersistedMarker: true,
     wakeRecalledMarker: true,
+    workTaskCorrect: true,
     workAppliedMarker: true,
     passed: true,
   });
