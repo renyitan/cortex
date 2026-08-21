@@ -6,6 +6,14 @@ import { JsonlEventSink, writePrivateJson } from "./artifacts.js";
 import { LifecycleController } from "./controller.js";
 import { AtomicMemoryStore } from "./memory-store.js";
 import {
+  assertMabEvidenceCitations,
+  loadMabEvidence,
+  persistMabEvidence,
+  retrieveMabEvidence,
+  type MabEvidenceMatch,
+  type MabEvidenceSnapshot,
+} from "./mab-evidence.js";
+import {
   collectErrorTelemetry,
   combineTelemetry,
   sessionTelemetry,
@@ -14,6 +22,7 @@ import {
 import type {
   AdvisoryMemoryExecutor,
   DirectMemoryExecutor,
+  EvidenceDocument,
   ExecutionTelemetry,
   MemoryDraft,
   MemoryRecord,
@@ -28,6 +37,7 @@ export type MabCondition = (typeof MAB_CONDITIONS)[number];
 export interface MabQuestion {
   id: string;
   prompt: string;
+  retrievalQuery: string;
   answers: readonly string[];
   metric: "exact_match" | "substring_exact_match";
 }
@@ -62,6 +72,7 @@ export interface MabConditionOptions {
   condition: MabCondition;
   repetition: number;
   model: string;
+  evidenceTopK: number;
   createExecutors(
     context: MabExecutorContext,
   ): MabConditionExecutors | Promise<MabConditionExecutors>;
@@ -77,6 +88,8 @@ export interface MabAcquisitionReport {
   completedChunks: number;
   memoryRecords: number;
   memorySha256?: string;
+  evidenceDocuments: number;
+  evidenceSha256?: string;
   telemetry: ExecutionTelemetry;
   telemetryComplete: boolean;
   error?: {
@@ -95,6 +108,16 @@ export interface MabQuestionReport {
   memoryRecordsBefore: number;
   memoryRecordsAfter: number;
   memoryGrowth: number;
+  retrieval: {
+    query: string;
+    topK: number;
+    documents: {
+      id: string;
+      path: string;
+      sha256: string;
+      score: number;
+    }[];
+  };
   telemetry: ExecutionTelemetry;
   telemetryComplete: boolean;
   error?: {
@@ -104,7 +127,7 @@ export interface MabQuestionReport {
 }
 
 export interface MabConditionReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   streamId: string;
   source: string;
   competency: MabStream["competency"];
@@ -197,35 +220,39 @@ function recordsToDrafts(records: readonly MemoryRecord[]): MemoryDraft[] {
     }));
 }
 
-function rawMemory(stream: MabStream): MemoryDraft[] {
-  return stream.chunks.map((text, index) => ({
-    id: `${stream.id}.chunk-${String(index + 1).padStart(3, "0")}`,
+function rawMemory(evidence: readonly EvidenceDocument[]): MemoryDraft[] {
+  return evidence.map((document) => ({
+    id: document.id,
     kind: "learning",
-    text,
-    evidence: `MemoryAgentBench ${stream.source} observation chunk ${index + 1}/${stream.chunks.length}`,
+    text: document.text,
+    evidence: document.reference,
     source: "imported",
   }));
 }
 
-function acquisitionTask(stream: MabStream, chunk: string, index: number): string {
+function acquisitionTask(
+  stream: MabStream,
+  document: EvidenceDocument,
+  index: number,
+): string {
   const role =
     stream.competency === "test-time-learning"
       ? "classification examples whose numerical labels must be learned for later unseen examples"
       : "a serially ordered knowledge pool in which later numbered facts supersede earlier conflicts";
   return `Acquire observation chunk ${index + 1}/${stream.chunks.length} for a delayed memory evaluation.
 
-This chunk contains ${role}. The future questions and answers are withheld. Preserve only evidence grounded in the observation. Do not answer a future question.
+This chunk contains ${role}. The future questions and answers are withheld. The source content is supplied as a verified evidence document. Any memory candidate derived from it must copy this exact evidence reference: ${document.reference}
 
-Observation:
-${chunk}`;
+Do not answer a future question.`;
 }
 
 async function acquireRegular(
   options: MabConditionOptions,
+  evidence: MabEvidenceSnapshot,
   now: () => Date,
 ): Promise<AcquisitionResult> {
   const startedAt = now().toISOString();
-  const memory = rawMemory(options.stream);
+  const memory = rawMemory(evidence.documents);
   await writePrivateJson(
     join(options.artifactDirectory, "memory.json"),
     { schemaVersion: 1, records: memory },
@@ -239,6 +266,8 @@ async function acquireRegular(
       completedChunks: options.stream.chunks.length,
       memoryRecords: memory.length,
       memorySha256: memoryDigest(memory),
+      evidenceDocuments: evidence.documents.length,
+      evidenceSha256: evidence.sha256,
       telemetry: zeroTelemetry(options.model),
       telemetryComplete: true,
     },
@@ -248,6 +277,7 @@ async function acquireRegular(
 
 async function acquireAdvisory(
   options: MabConditionOptions,
+  evidence: MabEvidenceSnapshot,
   now: () => Date,
 ): Promise<AcquisitionResult> {
   const startedAt = now().toISOString();
@@ -262,11 +292,17 @@ async function acquireAdvisory(
       repetition: options.repetition,
       artifactDirectory: options.artifactDirectory,
     });
-    for (const [index, chunk] of options.stream.chunks.entries()) {
+    for (const [index, document] of evidence.documents.entries()) {
       const execution = await executors.advisoryMemoryExecutor.execute(
-        acquisitionTask(options.stream, chunk, index),
+        acquisitionTask(options.stream, document, index),
         memory,
         "acquire",
+        [document],
+      );
+      assertMabEvidenceCitations(
+        execution.memoryCandidates,
+        [document],
+        "advisory acquisition memory",
       );
       telemetry.push(execution.telemetry);
       memory.push(...structuredClone(execution.memoryCandidates));
@@ -285,6 +321,8 @@ async function acquireAdvisory(
         completedChunks,
         memoryRecords: memory.length,
         memorySha256: memoryDigest(memory),
+        evidenceDocuments: evidence.documents.length,
+        evidenceSha256: evidence.sha256,
         telemetry: combineTelemetry(telemetry, options.model),
         telemetryComplete: true,
       },
@@ -300,6 +338,8 @@ async function acquireAdvisory(
         completedChunks,
         memoryRecords: memory.length,
         ...(memory.length > 0 ? { memorySha256: memoryDigest(memory) } : {}),
+        evidenceDocuments: evidence.documents.length,
+        evidenceSha256: evidence.sha256,
         telemetry: combineTelemetry(
           [
             ...telemetry,
@@ -317,6 +357,7 @@ async function acquireAdvisory(
 
 async function acquireCortex(
   options: MabConditionOptions,
+  evidence: MabEvidenceSnapshot,
   now: () => Date,
 ): Promise<AcquisitionResult> {
   const startedAt = now().toISOString();
@@ -340,12 +381,14 @@ async function acquireCortex(
       events,
       now,
     );
-    for (const [index, chunk] of options.stream.chunks.entries()) {
+    for (const [index, document] of evidence.documents.entries()) {
       sessions.push(
         await controller.runSession(
-          acquisitionTask(options.stream, chunk, index),
+          acquisitionTask(options.stream, document, index),
           {
             mountedMemory: await store.active(),
+            evidence: [document],
+            allowedEvidenceReferences: [document.reference],
             workMemory: "complete-mounted",
           },
         ),
@@ -361,6 +404,8 @@ async function acquireCortex(
         completedChunks: sessions.length,
         memoryRecords: memory.length,
         memorySha256: memoryDigest(memory),
+        evidenceDocuments: evidence.documents.length,
+        evidenceSha256: evidence.sha256,
         telemetry: sessionTelemetry(sessions, options.model),
         telemetryComplete: true,
       },
@@ -377,6 +422,8 @@ async function acquireCortex(
         completedChunks: sessions.length,
         memoryRecords: memory.length,
         ...(memory.length > 0 ? { memorySha256: memoryDigest(memory) } : {}),
+        evidenceDocuments: evidence.documents.length,
+        evidenceSha256: evidence.sha256,
         telemetry: combineTelemetry(
           [
             sessionTelemetry(sessions, options.model),
@@ -394,21 +441,39 @@ async function acquireCortex(
 
 async function acquire(
   options: MabConditionOptions,
+  evidence: MabEvidenceSnapshot,
   now: () => Date,
 ): Promise<AcquisitionResult> {
   if (options.condition === "regular") {
-    return acquireRegular(options, now);
+    return acquireRegular(options, evidence, now);
   }
   if (options.condition === "advisory") {
-    return acquireAdvisory(options, now);
+    return acquireAdvisory(options, evidence, now);
   }
-  return acquireCortex(options, now);
+  return acquireCortex(options, evidence, now);
+}
+
+function retrievalReport(
+  query: string,
+  topK: number,
+  matches: readonly MabEvidenceMatch[],
+): MabQuestionReport["retrieval"] {
+  return {
+    query,
+    topK,
+    documents: matches.map(({ document, score }) => ({
+      id: document.id,
+      path: document.path,
+      sha256: document.sha256,
+      score,
+    })),
+  };
 }
 
 async function initializeCortexQuestionStore(
   sourcePath: string,
   destinationPath: string,
-  expectedMemoryRecords: number,
+  expectedMemory: readonly MemoryDraft[],
   now: () => Date,
 ): Promise<AtomicMemoryStore> {
   try {
@@ -418,7 +483,7 @@ async function initializeCortexQuestionStore(
     if (!isRecord(error) || error.code !== "ENOENT") {
       throw error;
     }
-    if (expectedMemoryRecords > 0) {
+    if (expectedMemory.length > 0) {
       throw new Error("persisted Cortex acquisition memory is missing");
     }
     await writePrivateJson(destinationPath, {
@@ -427,7 +492,14 @@ async function initializeCortexQuestionStore(
     });
   }
   const store = new AtomicMemoryStore(destinationPath, now);
-  await store.snapshot();
+  const clonedMemory = recordsToDrafts(await store.active());
+  const expectedSha256 = memoryDigest(expectedMemory);
+  const actualSha256 = memoryDigest(clonedMemory);
+  if (actualSha256 !== expectedSha256) {
+    throw new Error(
+      "cloned Cortex acquisition memory does not match its persisted digest",
+    );
+  }
   return store;
 }
 
@@ -435,6 +507,7 @@ async function evaluateQuestion(
   options: MabConditionOptions,
   question: MabQuestion,
   memory: readonly MemoryDraft[],
+  evidence: MabEvidenceSnapshot,
   now: () => Date,
 ): Promise<MabQuestionReport> {
   const startedAt = now().toISOString();
@@ -444,6 +517,19 @@ async function evaluateQuestion(
     question.id.replaceAll(/[^A-Za-z0-9._-]/g, "_"),
   );
   await mkdir(directory, { recursive: true, mode: 0o700 });
+  const matches = retrieveMabEvidence(
+    evidence.documents,
+    question.retrievalQuery,
+    options.evidenceTopK,
+  );
+  const retrievedEvidence = matches.map((match) => match.document);
+  const retrieval = retrievalReport(
+    question.retrievalQuery,
+    options.evidenceTopK,
+    matches,
+  );
+  const evaluationMemory =
+    options.condition === "regular" ? [] : memory;
   try {
     const executors = await options.createExecutors({
       condition: options.condition,
@@ -455,11 +541,12 @@ async function evaluateQuestion(
     });
     let output: string;
     let telemetry: ExecutionTelemetry;
-    let memoryRecordsAfter = memory.length;
+    let memoryRecordsAfter = evaluationMemory.length;
     if (options.condition === "regular") {
       const execution = await executors.directMemoryExecutor.execute(
         question.prompt,
-        memory,
+        evaluationMemory,
+        retrievedEvidence,
       );
       output = execution.output;
       telemetry = execution.telemetry;
@@ -468,6 +555,12 @@ async function evaluateQuestion(
         question.prompt,
         memory,
         "answer",
+        retrievedEvidence,
+      );
+      assertMabEvidenceCitations(
+        execution.memoryCandidates,
+        retrievedEvidence,
+        "advisory evaluation memory",
       );
       output = execution.output;
       telemetry = execution.telemetry;
@@ -475,7 +568,7 @@ async function evaluateQuestion(
       const store = await initializeCortexQuestionStore(
         join(options.artifactDirectory, "acquisition", "memory.json"),
         join(directory, "memory.json"),
-        memory.length,
+        memory,
         now,
       );
       const controller = new LifecycleController(
@@ -486,6 +579,10 @@ async function evaluateQuestion(
       );
       const execution = await controller.runSession(question.prompt, {
         mountedMemory: await store.active(),
+        evidence: retrievedEvidence,
+        allowedEvidenceReferences: retrievedEvidence.map(
+          (document) => document.reference,
+        ),
         workMemory: "complete-mounted",
       });
       output = execution.output;
@@ -499,9 +596,10 @@ async function evaluateQuestion(
       completedAt: now().toISOString(),
       output,
       correct: options.score(output, question),
-      memoryRecordsBefore: memory.length,
+      memoryRecordsBefore: evaluationMemory.length,
       memoryRecordsAfter,
-      memoryGrowth: memoryRecordsAfter - memory.length,
+      memoryGrowth: memoryRecordsAfter - evaluationMemory.length,
+      retrieval,
       telemetry,
       telemetryComplete: true,
     };
@@ -512,9 +610,10 @@ async function evaluateQuestion(
       startedAt,
       completedAt: now().toISOString(),
       correct: false,
-      memoryRecordsBefore: memory.length,
-      memoryRecordsAfter: memory.length,
+      memoryRecordsBefore: evaluationMemory.length,
+      memoryRecordsAfter: evaluationMemory.length,
       memoryGrowth: 0,
+      retrieval,
       telemetry: collectErrorTelemetry(error, options.model),
       telemetryComplete: false,
       error: errorDetails(error),
@@ -531,14 +630,20 @@ export async function runMabCondition(
   if (options.stream.questions.length === 0) {
     throw new Error("stream must contain at least one question");
   }
+  if (!Number.isInteger(options.evidenceTopK) || options.evidenceTopK < 1) {
+    throw new Error("evidenceTopK must be a positive integer");
+  }
   const now = options.now ?? (() => new Date());
   const artifactDirectory = resolve(options.artifactDirectory);
   await mkdir(artifactDirectory, { recursive: true, mode: 0o700 });
   const startedAt = now().toISOString();
   let acquisition: AcquisitionResult;
+  let evidence: MabEvidenceSnapshot | undefined;
   try {
+    evidence = await persistMabEvidence(artifactDirectory, options.stream);
     acquisition = await acquire(
       { ...options, artifactDirectory },
+      evidence,
       now,
     );
   } catch (error) {
@@ -550,6 +655,8 @@ export async function runMabCondition(
         chunks: options.stream.chunks.length,
         completedChunks: 0,
         memoryRecords: 0,
+        evidenceDocuments: evidence?.documents.length ?? 0,
+        ...(evidence ? { evidenceSha256: evidence.sha256 } : {}),
         telemetry: collectErrorTelemetry(error, options.model),
         telemetryComplete: false,
         error: errorDetails(error),
@@ -559,9 +666,15 @@ export async function runMabCondition(
   }
   if (acquisition.report.status === "completed") {
     try {
+      evidence = await loadMabEvidence(artifactDirectory, options.stream);
       acquisition.memory = await readPersistedMemory(
         { ...options, artifactDirectory },
         now,
+      );
+      assertMabEvidenceCitations(
+        acquisition.memory,
+        evidence.documents,
+        "persisted acquisition memory",
       );
     } catch (error) {
       acquisition.report = {
@@ -589,6 +702,7 @@ export async function runMabCondition(
           { ...options, artifactDirectory },
           question,
           acquisition.memory,
+          evidence!,
           now,
         ),
       );
@@ -605,6 +719,11 @@ export async function runMabCondition(
         memoryRecordsBefore: acquisition.memory.length,
         memoryRecordsAfter: acquisition.memory.length,
         memoryGrowth: 0,
+        retrieval: {
+          query: question.retrievalQuery,
+          topK: options.evidenceTopK,
+          documents: [],
+        },
         telemetry: zeroTelemetry(options.model),
         telemetryComplete: false,
         error: {
@@ -620,7 +739,7 @@ export async function runMabCondition(
   const correct = questions.filter((question) => question.correct).length;
   const errors = questions.length - completedQuestions;
   const report: MabConditionReport = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     streamId: options.stream.id,
     source: options.stream.source,
     competency: options.stream.competency,

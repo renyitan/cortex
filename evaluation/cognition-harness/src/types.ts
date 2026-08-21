@@ -25,6 +25,14 @@ export interface MemoryDraft {
 
 export interface MemoryCandidate extends MemoryDraft {}
 
+export interface EvidenceDocument {
+  id: string;
+  path: string;
+  sha256: string;
+  reference: string;
+  text: string;
+}
+
 export interface MemoryWrite {
   candidateId: string;
   record: MemoryDraft;
@@ -50,6 +58,7 @@ export interface WakeRequest extends PhaseRequestBase {
 export interface WorkRequest extends PhaseRequestBase {
   phase: "work";
   recalledMemory: readonly MemoryRecord[];
+  evidence: readonly EvidenceDocument[];
   memoryScope: "wake-selected" | "complete-mounted";
 }
 
@@ -133,6 +142,7 @@ export interface DirectMemoryExecutor {
   execute(
     task: string,
     memory: readonly MemoryDraft[],
+    evidence?: readonly EvidenceDocument[],
   ): Promise<BaselineExecution>;
 }
 
@@ -145,6 +155,7 @@ export interface AdvisoryMemoryExecutor {
     task: string,
     memory: readonly MemoryDraft[],
     mode: "acquire" | "answer",
+    evidence?: readonly EvidenceDocument[],
   ): Promise<AdvisoryMemoryExecution>;
 }
 

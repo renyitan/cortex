@@ -76,6 +76,9 @@ const DEFAULT_MAB_EXECUTION: MabExecutionPolicy = {
   timeoutMs: 300_000,
   workMemory: "complete-mounted",
   questionIsolation: "fresh-runtime-and-cloned-store",
+  evidenceRetention: "immutable-source-chunks-sha256",
+  evidenceRetrieval: "shared-deterministic-bm25",
+  evidenceTopK: 10,
 };
 const THINKING_LEVELS: ReadonlySet<string> = new Set([
   "off",
@@ -354,6 +357,7 @@ function toMabStream(
   ).map((question) => ({
     id: question.qaPairId,
     prompt: question.prompt,
+    retrievalQuery: question.question,
     answers: question.answers,
     metric: question.metric,
   }));
@@ -476,6 +480,7 @@ async function mabCommand(args: readonly string[]): Promise<void> {
       condition,
       repetition: 1,
       model: modelId,
+      evidenceTopK: DEFAULT_MAB_EXECUTION.evidenceTopK,
       createExecutors,
       score(output, question) {
         return scoreMabOutput(

@@ -4,6 +4,7 @@ import type {
   AdvisoryMemoryExecution,
   AdvisoryMemoryExecutor,
   DirectMemoryExecutor,
+  EvidenceDocument,
   ExecutionTelemetry,
   MemoryDraft,
   Phase,
@@ -71,15 +72,24 @@ export class ScriptedBaselineExecutor implements BaselineExecutor {
 }
 
 export class ScriptedDirectMemoryExecutor implements DirectMemoryExecutor {
-  readonly calls: { task: string; memory: readonly MemoryDraft[] }[] = [];
+  readonly calls: {
+    task: string;
+    memory: readonly MemoryDraft[];
+    evidence: readonly EvidenceDocument[];
+  }[] = [];
 
   constructor(private readonly outputs: string[]) {}
 
   async execute(
     task: string,
     memory: readonly MemoryDraft[],
+    evidence: readonly EvidenceDocument[] = [],
   ): Promise<BaselineExecution> {
-    this.calls.push({ task, memory: structuredClone(memory) });
+    this.calls.push({
+      task,
+      memory: structuredClone(memory),
+      evidence: structuredClone(evidence),
+    });
     const output = this.outputs.shift();
     if (output === undefined) throw new Error("no scripted direct-memory response");
     return { output, telemetry: emptyTelemetry() };
@@ -99,6 +109,7 @@ export class ScriptedAdvisoryMemoryExecutor implements AdvisoryMemoryExecutor {
     task: string;
     memory: readonly MemoryDraft[];
     mode: "acquire" | "answer";
+    evidence: readonly EvidenceDocument[];
   }[] = [];
 
   constructor(private readonly outputs: AdvisoryMemoryExecution[]) {}
@@ -107,11 +118,13 @@ export class ScriptedAdvisoryMemoryExecutor implements AdvisoryMemoryExecutor {
     task: string,
     memory: readonly MemoryDraft[],
     mode: "acquire" | "answer",
+    evidence: readonly EvidenceDocument[] = [],
   ): Promise<AdvisoryMemoryExecution> {
     this.calls.push({
       task,
       memory: structuredClone(memory),
       mode,
+      evidence: structuredClone(evidence),
     });
     const output = this.outputs.shift();
     if (output === undefined) {

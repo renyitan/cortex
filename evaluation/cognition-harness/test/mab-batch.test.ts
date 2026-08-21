@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,6 +48,13 @@ function prepared(source: MabSource): MabPreparedStream {
   };
 }
 
+function evidenceReference(source: string): string {
+  const text = `${source} observation with answer 1.`;
+  return `evidence/chunk-001.txt#sha256=${createHash("sha256")
+    .update(text)
+    .digest("hex")}`;
+}
+
 function cortexPhases(source: string): ScriptedPhaseStep[] {
   return [
     {
@@ -67,7 +75,7 @@ function cortexPhases(source: string): ScriptedPhaseStep[] {
             id: `${source}-memory`,
             kind: "learning",
             text: `${source} observation with answer 1.`,
-            evidence: "observation",
+            evidence: evidenceReference(source),
             source: "observed",
           },
         ],
@@ -85,7 +93,7 @@ function cortexPhases(source: string): ScriptedPhaseStep[] {
               id: `${source}-memory`,
               kind: "learning",
               text: `${source} observation with answer 1.`,
-              evidence: "observation",
+              evidence: evidenceReference(source),
               source: "observed",
             },
           },
@@ -161,6 +169,9 @@ test("freezes an immutable balanced manifest and runs all conditions", async () 
       timeoutMs: 10_000,
       workMemory: "complete-mounted",
       questionIsolation: "fresh-runtime-and-cloned-store",
+      evidenceRetention: "immutable-source-chunks-sha256",
+      evidenceRetrieval: "shared-deterministic-bm25",
+      evidenceTopK: 10,
     },
     thresholds: {
       ...defaultMabThresholds(),
@@ -214,6 +225,54 @@ test("freezes an immutable balanced manifest and runs all conditions", async () 
     }),
     /execution model does not match/,
   );
+  const changedChunks = streams.map((stream, index) =>
+    index === 0
+      ? {
+          ...stream,
+          chunks: [`${stream.chunks[0]} changed`],
+        }
+      : stream,
+  );
+  await assert.rejects(
+    runMabBatch({
+      artifactDirectory: join(directory, "changed-chunks"),
+      manifest,
+      streams: changedChunks,
+      execution: {
+        model: manifest.model,
+        repository: manifest.repository,
+        source: manifest.source,
+      },
+      createExecutors() {
+        throw new Error("must not initialize executors");
+      },
+    }),
+    /prepared stream changed/,
+  );
+  const changedQuestions = streams.map((stream, index) =>
+    index === 0
+      ? {
+          ...stream,
+          questions: [`${stream.questions[0]} changed`],
+        }
+      : stream,
+  );
+  await assert.rejects(
+    runMabBatch({
+      artifactDirectory: join(directory, "changed-questions"),
+      manifest,
+      streams: changedQuestions,
+      execution: {
+        model: manifest.model,
+        repository: manifest.repository,
+        source: manifest.source,
+      },
+      createExecutors() {
+        throw new Error("must not initialize executors");
+      },
+    }),
+    /question inputs changed/,
+  );
 
   const report = await runMabBatch({
     artifactDirectory: join(directory, "run"),
@@ -235,7 +294,7 @@ test("freezes an immutable balanced manifest and runs all conditions", async () 
                     id: `${context.streamId}-advisory`,
                     kind: "learning",
                     text: `${context.streamId} observation with answer 1.`,
-                    evidence: "observation",
+                    evidence: evidenceReference(context.streamId),
                     source: "observed",
                   },
                 ],
@@ -268,6 +327,8 @@ test("freezes an immutable balanced manifest and runs all conditions", async () 
   assert.equal(report.aggregates.advisory.accuracy, 1);
   assert.equal(report.aggregates.cortex.accuracy, 1);
   assert.equal(report.contrasts[0]?.difference, 0);
+  assert.equal(report.criteria.sharedEvidenceAccessMatched, true);
+  assert.equal(report.criteria.costLimitMet, true);
   assert.equal(report.criteria.supported, false);
 });
 
@@ -305,6 +366,9 @@ test("stops before a model call can exceed the cost limit", async () => {
       timeoutMs: 10_000,
       workMemory: "complete-mounted",
       questionIsolation: "fresh-runtime-and-cloned-store",
+      evidenceRetention: "immutable-source-chunks-sha256",
+      evidenceRetrieval: "shared-deterministic-bm25",
+      evidenceTopK: 10,
     },
     thresholds: {
       ...defaultMabThresholds(),
@@ -343,5 +407,6 @@ test("stops before a model call can exceed the cost limit", async () => {
   assert.equal(report.reports.length, 1);
   assert.equal(modelCalls, 0);
   assert.equal(report.criteria.runComplete, false);
+  assert.equal(report.criteria.costLimitMet, false);
   assert.equal(report.criteria.supported, false);
 });

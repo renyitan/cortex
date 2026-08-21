@@ -53,12 +53,19 @@ export interface MabBatchModel {
   maximumInvocationCostUsd: number;
 }
 
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 export interface MabExecutionPolicy {
   maxAttempts: number;
   maxTurns: number;
   timeoutMs: number;
   workMemory: "complete-mounted";
   questionIsolation: "fresh-runtime-and-cloned-store";
+  evidenceRetention: "immutable-source-chunks-sha256";
+  evidenceRetrieval: "shared-deterministic-bm25";
+  evidenceTopK: number;
 }
 
 export interface MabBatchThresholds {
@@ -73,7 +80,12 @@ export interface MabManifestStream {
   source: MabSource;
   contextHash: string;
   chunkCount: number;
-  questionIds: string[];
+  chunkSha256: string[];
+  questions: {
+    id: string;
+    promptSha256: string;
+    retrievalQuerySha256: string;
+  }[];
 }
 
 export interface MabManifestRun {
@@ -83,7 +95,7 @@ export interface MabManifestRun {
 }
 
 export interface MabBatchManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
   benchmark: {
     repository: typeof MAB_DATASET_REPOSITORY;
     revision: typeof MAB_DATASET_REVISION;
@@ -111,7 +123,7 @@ export interface MabBatchManifest {
     architecture: string;
   };
   protocol: {
-    adapter: "cortex-mab-v1";
+    adapter: "cortex-mab-v2";
     chunking: "semantic-units-o200k_base";
     scoring: "memory-agent-bench-upstream-compatible";
     execution: MabExecutionPolicy;
@@ -172,7 +184,7 @@ export interface MabPairedContrast {
 }
 
 export interface MabBatchReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   batchId: string;
   status: "completed" | "failed" | "cost-limit";
   startedAt: string;
@@ -192,6 +204,7 @@ export interface MabBatchReport {
     costLimitMet: boolean;
     runComplete: boolean;
     modelMatched: boolean;
+    sharedEvidenceAccessMatched: boolean;
     confirmatoryProtocolMet: boolean;
     supported: boolean;
   };
@@ -308,7 +321,7 @@ export async function freezeMabManifest(
     }
   }
   const manifest: MabBatchManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     benchmark: {
       repository: MAB_DATASET_REPOSITORY,
       revision: MAB_DATASET_REVISION,
@@ -336,9 +349,12 @@ export async function freezeMabManifest(
         source,
         contextHash: stream.contextHash,
         chunkCount: stream.chunks.length,
-        questionIds: (bySource.get(source) ?? []).map(
-          (question) => question.qaPairId,
-        ),
+        chunkSha256: stream.chunks.map(sha256),
+        questions: (bySource.get(source) ?? []).map((question) => ({
+          id: question.qaPairId,
+          promptSha256: sha256(question.prompt),
+          retrievalQuerySha256: sha256(question.question),
+        })),
       };
     }),
     runs,
@@ -351,7 +367,7 @@ export async function freezeMabManifest(
       architecture: process.arch,
     },
     protocol: {
-      adapter: "cortex-mab-v1",
+      adapter: "cortex-mab-v2",
       chunking: "semantic-units-o200k_base",
       scoring: "memory-agent-bench-upstream-compatible",
       execution: structuredClone(options.execution),
@@ -420,17 +436,20 @@ function validateManifestStreams(
     }
     if (
       prepared.contextHash !== frozen.contextHash ||
-      prepared.chunks.length !== frozen.chunkCount
+      prepared.chunks.length !== frozen.chunkCount ||
+      !isDeepStrictEqual(prepared.chunks.map(sha256), frozen.chunkSha256)
     ) {
       throw new Error(`prepared stream changed for ${frozen.source}`);
     }
+    const questionIds = frozen.questions.map((question) => question.id);
     if (
-      frozen.questionIds.length !== manifest.questionsPerStream ||
-      new Set(frozen.questionIds).size !== frozen.questionIds.length ||
-      frozen.questionIds.some((id) => !prepared.qaPairIds.includes(id))
+      questionIds.length !== manifest.questionsPerStream ||
+      new Set(questionIds).size !== questionIds.length ||
+      questionIds.some((id) => !prepared.qaPairIds.includes(id))
     ) {
       throw new Error(`manifest questions are invalid for ${frozen.source}`);
     }
+    streamForManifest(prepared, frozen);
   }
   for (let repetition = 1; repetition <= manifest.repetitions; repetition += 1) {
     for (const source of MAB_SELECTED_SOURCES) {
@@ -492,7 +511,7 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
   const protocol = value.protocol;
   const thresholds = value.thresholds;
   return (
-    value.schemaVersion === 1 &&
+    value.schemaVersion === 2 &&
     typeof value.batchId === "string" &&
     typeof value.createdAt === "string" &&
     (value.evidenceMode === "confirmatory" ||
@@ -509,7 +528,15 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
         isMabSource(stream.source) &&
         typeof stream.contextHash === "string" &&
         typeof stream.chunkCount === "number" &&
-        isStringArray(stream.questionIds),
+        isStringArray(stream.chunkSha256) &&
+        Array.isArray(stream.questions) &&
+        stream.questions.every(
+          (question) =>
+            isRecord(question) &&
+            typeof question.id === "string" &&
+            typeof question.promptSha256 === "string" &&
+            typeof question.retrievalQuerySha256 === "string",
+        ),
     ) &&
     Array.isArray(value.runs) &&
     value.runs.every(
@@ -546,7 +573,7 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
     typeof runtime.platform === "string" &&
     typeof runtime.architecture === "string" &&
     isRecord(protocol) &&
-    protocol.adapter === "cortex-mab-v1" &&
+    protocol.adapter === "cortex-mab-v2" &&
     protocol.chunking === "semantic-units-o200k_base" &&
     protocol.scoring === "memory-agent-bench-upstream-compatible" &&
     isRecord(protocol.execution) &&
@@ -556,6 +583,11 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
     protocol.execution.workMemory === "complete-mounted" &&
     protocol.execution.questionIsolation ===
       "fresh-runtime-and-cloned-store" &&
+    protocol.execution.evidenceRetention ===
+      "immutable-source-chunks-sha256" &&
+    protocol.execution.evidenceRetrieval ===
+      "shared-deterministic-bm25" &&
+    typeof protocol.execution.evidenceTopK === "number" &&
     isRecord(thresholds) &&
     typeof thresholds.minimumAccuracyImprovement === "number" &&
     typeof thresholds.confidenceLevel === "number" &&
@@ -581,8 +613,15 @@ export async function readMabManifest(
   if (
     manifest.streams.some(
       (stream) =>
-        !isStringArray(stream.questionIds) ||
-        stream.questionIds.length !== manifest.questionsPerStream,
+        !isStringArray(stream.chunkSha256) ||
+        stream.chunkSha256.length !== stream.chunkCount ||
+        stream.chunkSha256.some((hash) => !/^[a-f0-9]{64}$/.test(hash)) ||
+        stream.questions.length !== manifest.questionsPerStream ||
+        stream.questions.some(
+          (question) =>
+            !/^[a-f0-9]{64}$/.test(question.promptSha256) ||
+            !/^[a-f0-9]{64}$/.test(question.retrievalQuerySha256),
+        ),
     )
   ) {
     throw new Error("MemoryAgentBench manifest has invalid question IDs");
@@ -600,6 +639,10 @@ export async function readMabManifest(
     manifest.protocol.execution.timeoutMs,
     "timeoutMs",
   );
+  validatePositiveInteger(
+    manifest.protocol.execution.evidenceTopK,
+    "evidenceTopK",
+  );
   if (
     !Number.isFinite(manifest.model.maximumInvocationCostUsd) ||
     manifest.model.maximumInvocationCostUsd <= 0
@@ -609,7 +652,7 @@ export async function readMabManifest(
   if (
     manifest.evidenceMode === "confirmatory" &&
     (manifest.repetitions < 3 ||
-      manifest.streams.some((stream) => stream.questionIds.length !== 100))
+      manifest.streams.some((stream) => stream.questions.length !== 100))
   ) {
     throw new Error(
       "confirmatory manifests require at least three repetitions and all 100 questions per stream",
@@ -628,26 +671,39 @@ function streamForManifest(
   if (prepared.chunks.length !== manifest.chunkCount) {
     throw new Error(`chunk count changed for ${prepared.source}`);
   }
-  const questions = manifest.questionIds.map((questionId): MabQuestion => {
-    const index = prepared.qaPairIds.indexOf(questionId);
+  const currentChunkSha256 = prepared.chunks.map(sha256);
+  if (!isDeepStrictEqual(currentChunkSha256, manifest.chunkSha256)) {
+    throw new Error(`evidence chunks changed for ${prepared.source}`);
+  }
+  const questions = manifest.questions.map((frozen): MabQuestion => {
+    const index = prepared.qaPairIds.indexOf(frozen.id);
     if (index < 0) {
       throw new Error(
-        `question ${questionId} is absent from ${prepared.source}`,
+        `question ${frozen.id} is absent from ${prepared.source}`,
       );
     }
     const question = prepared.questions[index];
     const answers = prepared.answers[index];
     if (!question || !answers) {
-      throw new Error(`question data is incomplete for ${questionId}`);
+      throw new Error(`question data is incomplete for ${frozen.id}`);
     }
     const selected = selectMabQuestions([prepared], prepared.questions.length)
-      .find((entry) => entry.qaPairId === questionId);
+      .find((entry) => entry.qaPairId === frozen.id);
     if (!selected) {
-      throw new Error(`could not format question ${questionId}`);
+      throw new Error(`could not format question ${frozen.id}`);
+    }
+    if (
+      sha256(selected.prompt) !== frozen.promptSha256 ||
+      sha256(selected.question) !== frozen.retrievalQuerySha256
+    ) {
+      throw new Error(
+        `question inputs changed for ${prepared.source}:${frozen.id}`,
+      );
     }
     return {
-      id: questionId,
+      id: frozen.id,
       prompt: selected.prompt,
+      retrievalQuery: selected.question,
       answers: [...answers],
       metric: selected.metric,
     };
@@ -841,6 +897,72 @@ function totalCost(reports: readonly MabConditionReport[]): number {
   );
 }
 
+function sharedEvidenceAccessMatched(
+  reports: readonly MabConditionReport[],
+): boolean {
+  const byReport = new Map(
+    reports.map((report) => [
+      `${report.source}|${report.repetition}|${report.condition}`,
+      report,
+    ]),
+  );
+  for (const regular of reports.filter(
+    (report) => report.condition === "regular",
+  )) {
+    const advisory = byReport.get(
+      `${regular.source}|${regular.repetition}|advisory`,
+    );
+    const cortex = byReport.get(
+      `${regular.source}|${regular.repetition}|cortex`,
+    );
+    if (!advisory || !cortex) {
+      return false;
+    }
+    if (
+      regular.questions.length !== advisory.questions.length ||
+      regular.questions.length !== cortex.questions.length
+    ) {
+      return false;
+    }
+    if (
+      regular.acquisition.evidenceSha256 === undefined ||
+      regular.acquisition.evidenceSha256 !==
+        advisory.acquisition.evidenceSha256 ||
+      regular.acquisition.evidenceSha256 !==
+        cortex.acquisition.evidenceSha256
+    ) {
+      return false;
+    }
+    const advisoryQuestions = new Map(
+      advisory.questions.map((question) => [
+        question.questionId,
+        question.retrieval,
+      ]),
+    );
+    const cortexQuestions = new Map(
+      cortex.questions.map((question) => [
+        question.questionId,
+        question.retrieval,
+      ]),
+    );
+    for (const question of regular.questions) {
+      if (
+        !isDeepStrictEqual(
+          question.retrieval,
+          advisoryQuestions.get(question.questionId),
+        ) ||
+        !isDeepStrictEqual(
+          question.retrieval,
+          cortexQuestions.get(question.questionId),
+        )
+      ) {
+        return false;
+      }
+    }
+  }
+  return reports.some((report) => report.condition === "regular");
+}
+
 interface MabBudget {
   spentUsd: number;
   maximumUsd: number;
@@ -887,14 +1009,21 @@ function budgetedExecutors(
     }
   };
   const directMemoryExecutor: DirectMemoryExecutor = {
-    async execute(task, memory) {
-      return run(() => executors.directMemoryExecutor.execute(task, memory));
+    async execute(task, memory, evidence) {
+      return run(() =>
+        executors.directMemoryExecutor.execute(task, memory, evidence),
+      );
     },
   };
   const advisoryMemoryExecutor: AdvisoryMemoryExecutor = {
-    async execute(task, memory, mode) {
+    async execute(task, memory, mode, evidence) {
       return run(() =>
-        executors.advisoryMemoryExecutor.execute(task, memory, mode),
+        executors.advisoryMemoryExecutor.execute(
+          task,
+          memory,
+          mode,
+          evidence,
+        ),
       );
     },
   };
@@ -976,6 +1105,8 @@ export async function runMabBatch(
           condition,
           repetition: run.repetition,
           model: options.manifest.model.resolvedId,
+          evidenceTopK:
+            options.manifest.protocol.execution.evidenceTopK,
           async createExecutors(context) {
             return budgetedExecutors(
               await options.createExecutors(context),
@@ -997,7 +1128,7 @@ export async function runMabBatch(
       await writePrivateJson(
         join(artifactDirectory, "partial-report.json"),
         {
-          schemaVersion: 1,
+          schemaVersion: 2,
           batchId: options.manifest.batchId,
           reports,
         },
@@ -1050,6 +1181,7 @@ export async function runMabBatch(
     advisory.difference >=
       options.manifest.thresholds.minimumAccuracyImprovement;
   const costLimitMet =
+    !costLimited &&
     totalCost(reports) <= options.manifest.thresholds.maximumCostUsd;
   const runComplete =
     !costLimited &&
@@ -1071,6 +1203,8 @@ export async function runMabBatch(
       (report) =>
         report.telemetry.model === options.manifest.model.resolvedId,
     ),
+    sharedEvidenceAccessMatched:
+      sharedEvidenceAccessMatched(reports),
     confirmatoryProtocolMet:
       options.manifest.evidenceMode === "confirmatory",
     supported: false,
@@ -1084,14 +1218,16 @@ export async function runMabBatch(
     criteria.costLimitMet &&
     criteria.runComplete &&
     criteria.modelMatched &&
+    criteria.sharedEvidenceAccessMatched &&
     criteria.confirmatoryProtocolMet;
   const executionValid =
     criteria.runComplete &&
     criteria.failureRateMet &&
     criteria.costLimitMet &&
-    criteria.modelMatched;
+    criteria.modelMatched &&
+    criteria.sharedEvidenceAccessMatched;
   const report: MabBatchReport = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     batchId: options.manifest.batchId,
     status: costLimited
       ? "cost-limit"

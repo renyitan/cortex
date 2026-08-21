@@ -118,6 +118,60 @@ test("enforces WAKE -> WORK -> SLEEP and commits only supported writes", async (
   executor.assertExhausted();
 });
 
+test("rejects WORK memory candidates with unresolved evidence", async () => {
+  const store = await createStore();
+  const executor = new ScriptedPhaseExecutor([
+    {
+      phase: "wake",
+      payload: {
+        phase: "wake",
+        selectedMemoryIds: [],
+        summary: "No prior memory.",
+      },
+    },
+    {
+      phase: "work",
+      payload: {
+        phase: "work",
+        output: "Acknowledged.",
+        summary: "Proposed an unsupported candidate.",
+        memoryCandidates: [
+          {
+            id: "unsupported",
+            kind: "learning",
+            text: "A claim.",
+            evidence: "missing.txt#sha256=deadbeef",
+            source: "observed",
+          },
+        ],
+      },
+    },
+  ]);
+  const controller = new LifecycleController(executor, store);
+
+  await assert.rejects(
+    runBoundedSession(controller, store, "Acquire evidence.", {
+      evidence: [
+        {
+          id: "evidence-1",
+          path: "evidence/chunk-001.txt",
+          sha256: "a".repeat(64),
+          reference: `evidence/chunk-001.txt#sha256=${"a".repeat(64)}`,
+          text: "Grounded evidence.",
+        },
+      ],
+      allowedEvidenceReferences: [
+        `evidence/chunk-001.txt#sha256=${"a".repeat(64)}`,
+      ],
+    }),
+    (error: unknown) =>
+      error instanceof LifecycleRunError &&
+      error.phase === "work" &&
+      error.message.includes("unresolved evidence citations"),
+  );
+  assert.deepEqual(await store.snapshot(), []);
+});
+
 test("rejects a WAKE receipt that names unavailable memory", async () => {
   const store = await createStore();
   const executor = new ScriptedPhaseExecutor([

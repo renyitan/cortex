@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,11 +33,17 @@ const stream: MabStream = {
     {
       id: "question-1",
       prompt: "Label a failed disposable card.",
+      retrievalQuery: "failed disposable card",
       answers: ["28"],
       metric: "exact_match",
     },
   ],
 };
+
+const evidenceReference =
+  `evidence/chunk-001.txt#sha256=${createHash("sha256")
+    .update(stream.chunks[0]!)
+    .digest("hex")}`;
 
 function phases(): ScriptedPhaseStep[] {
   return [
@@ -58,7 +65,7 @@ function phases(): ScriptedPhaseStep[] {
             id: "label-28",
             kind: "learning",
             text: "A failed disposable card maps to label 28.",
-            evidence: "observation",
+            evidence: evidenceReference,
             source: "observed",
           },
         ],
@@ -76,7 +83,7 @@ function phases(): ScriptedPhaseStep[] {
               id: "label-28",
               kind: "learning",
               text: "A failed disposable card maps to label 28.",
-              evidence: "observation",
+              evidence: evidenceReference,
               source: "observed",
             },
           },
@@ -123,6 +130,7 @@ test("runs regular raw persistence without acquisition model calls", async () =>
     condition: "regular",
     repetition: 1,
     model: "scripted",
+    evidenceTopK: 10,
     createExecutors() {
       factoryCalls += 1;
       return {
@@ -139,8 +147,11 @@ test("runs regular raw persistence without acquisition model calls", async () =>
   assert.equal(report.status, "completed");
   assert.equal(report.acquisition.memoryRecords, 1);
   assert.equal(report.correct, 1);
+  assert.equal(report.questions[0]?.memoryRecordsBefore, 0);
+  assert.equal(report.questions[0]?.retrieval.documents.length, 1);
   assert.equal(factoryCalls, 1);
-  assert.equal(direct.calls[0]?.memory[0]?.text, stream.chunks[0]);
+  assert.equal(direct.calls[0]?.memory.length, 0);
+  assert.equal(direct.calls[0]?.evidence[0]?.text, stream.chunks[0]);
   assert.equal((await stat(join(directory, "report.json"))).mode & 0o777, 0o600);
 });
 
@@ -155,7 +166,7 @@ test("runs advisory acquisition and delayed use with isolated calls", async () =
           id: "label-28",
           kind: "learning",
           text: "A failed disposable card maps to label 28.",
-          evidence: "observation",
+          evidence: evidenceReference,
           source: "observed",
         },
       ],
@@ -176,6 +187,7 @@ test("runs advisory acquisition and delayed use with isolated calls", async () =
     condition: "advisory",
     repetition: 1,
     model: "scripted",
+    evidenceTopK: 10,
     createExecutors(context) {
       return {
         directMemoryExecutor: new ScriptedDirectMemoryExecutor([]),
@@ -193,6 +205,15 @@ test("runs advisory acquisition and delayed use with isolated calls", async () =
   assert.equal(report.acquisition.completedChunks, 1);
   assert.equal(report.correct, 1);
   assert.equal(answer.calls[0]?.memory[0]?.id, "label-28");
+  assert.equal(
+    acquire.calls[0]?.evidence[0]?.reference,
+    evidenceReference,
+  );
+  assert.equal(answer.calls[0]?.evidence[0]?.text, stream.chunks[0]);
+  assert.equal(
+    report.questions[0]?.retrieval.documents[0]?.id,
+    "banking-fixture.evidence-001",
+  );
   assert.equal(acquire.calls[0]?.mode, "acquire");
   assert.equal(answer.calls[0]?.mode, "answer");
 });
@@ -208,6 +229,7 @@ test("runs Cortex acquisition and answers with complete mounted memory", async (
     condition: "cortex",
     repetition: 1,
     model: "scripted",
+    evidenceTopK: 10,
     createExecutors() {
       return {
         directMemoryExecutor: new ScriptedDirectMemoryExecutor([]),
@@ -233,12 +255,68 @@ test("runs Cortex acquisition and answers with complete mounted memory", async (
     "complete-mounted",
   );
   assert.equal(
+    acquisitionWork?.phase === "work"
+      ? acquisitionWork.evidence[0]?.reference
+      : undefined,
+    evidenceReference,
+  );
+  assert.equal(
     evaluationWork?.phase === "work"
       ? evaluationWork.recalledMemory[0]?.text
       : undefined,
     "A failed disposable card maps to label 28.",
   );
+  assert.equal(
+    evaluationWork?.phase === "work"
+      ? evaluationWork.evidence[0]?.text
+      : undefined,
+    stream.chunks[0],
+  );
   phaseExecutor.assertExhausted();
+});
+
+test("rejects advisory acquisition candidates with unresolved evidence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cortex-mab-condition-"));
+  temporaryDirectories.push(directory);
+  const report = await runMabCondition({
+    artifactDirectory: directory,
+    stream,
+    condition: "advisory",
+    repetition: 1,
+    model: "scripted",
+    evidenceTopK: 10,
+    createExecutors() {
+      return {
+        directMemoryExecutor: new ScriptedDirectMemoryExecutor([]),
+        advisoryMemoryExecutor: new ScriptedAdvisoryMemoryExecutor([
+          {
+            output: "Acknowledged.",
+            memoryCandidates: [
+              {
+                id: "ungrounded",
+                kind: "learning",
+                text: "A claim without durable evidence.",
+                evidence: "current observation",
+                source: "observed",
+              },
+            ],
+            telemetry: emptyTelemetry(),
+          },
+        ]),
+        phaseExecutor: new ScriptedPhaseExecutor([]),
+      };
+    },
+    score() {
+      return false;
+    },
+  });
+
+  assert.equal(report.status, "error");
+  assert.match(
+    report.acquisition.error?.message ?? "",
+    /unresolved evidence citations/,
+  );
+  assert.equal(report.questions[0]?.status, "error");
 });
 
 test("retains every question as an error when acquisition fails", async () => {
@@ -250,6 +328,7 @@ test("retains every question as an error when acquisition fails", async () => {
     condition: "advisory",
     repetition: 1,
     model: "scripted",
+    evidenceTopK: 10,
     createExecutors() {
       return {
         directMemoryExecutor: new ScriptedDirectMemoryExecutor([]),

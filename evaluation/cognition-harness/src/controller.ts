@@ -7,6 +7,7 @@ import { AtomicMemoryStore } from "./memory-store.js";
 import type {
   CuratePayload,
   CurateRequest,
+  EvidenceDocument,
   ExecutionTelemetry,
   MemoryCandidate,
   MemoryRecord,
@@ -35,6 +36,8 @@ export interface LifecycleRunProgress {
 
 export interface LifecycleSessionOptions {
   mountedMemory: readonly MemoryRecord[];
+  evidence?: readonly EvidenceDocument[];
+  allowedEvidenceReferences?: readonly string[];
   curate?: boolean;
   workMemory?: "wake-selected" | "complete-mounted";
 }
@@ -169,13 +172,27 @@ function validateMountedMemory(
   return structuredClone(activeMemory);
 }
 
-function validateWork(payload: PhasePayload): WorkPayload {
+function validateWork(
+  payload: PhasePayload,
+  allowedEvidenceReferences?: readonly string[],
+): WorkPayload {
   if (payload.phase !== "work") throw new Error(`expected work payload, received ${payload.phase}`);
   if (payload.output.trim().length === 0) throw new Error("WORK output must not be empty");
   requireDistinct(
     payload.memoryCandidates.map((candidate) => candidate.id),
     "memoryCandidates",
   );
+  if (allowedEvidenceReferences !== undefined) {
+    const allowed = new Set(allowedEvidenceReferences);
+    const unresolved = payload.memoryCandidates
+      .map((candidate) => candidate.evidence)
+      .filter((evidence) => !allowed.has(evidence));
+    if (unresolved.length > 0) {
+      throw new Error(
+        `WORK produced unresolved evidence citations: ${[...new Set(unresolved)].join(", ")}`,
+      );
+    }
+  }
   return payload;
 }
 
@@ -305,12 +322,14 @@ export class LifecycleController {
       runId,
       task,
       recalledMemory: workMemory,
+      evidence: structuredClone(options.evidence ?? []),
       memoryScope: options.workMemory ?? "wake-selected",
     };
     const workExecution = await this.perform(
       workRequest,
       receipts,
-      validateWork,
+      (payload) =>
+        validateWork(payload, options.allowedEvidenceReferences),
     ).catch((error: unknown) =>
       throwWithProgress(
         error,
