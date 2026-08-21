@@ -183,6 +183,9 @@ test("runs isolated LongMemEval conditions and records retrieval evidence", asyn
     now: () => new Date("2026-08-21T00:00:00.000Z"),
   });
 
+  assert.equal(report.schemaVersion, 2);
+  assert.equal(report.manifest.schemaVersion, 1);
+  assert.equal(report.items[0]?.schemaVersion, 2);
   assert.equal(report.status, "completed");
   assert.equal(report.conditions.stateless.completed, 1);
   assert.equal(report.conditions.oracle.diagnosticNormalizedExactMatches, 1);
@@ -258,6 +261,125 @@ test("retains a failed LongMemEval condition without suppressing others", async 
   });
 });
 
+test("retains retrieval evidence when Cortex fails after WAKE", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cortex-longmemeval-run-"));
+  temporaryDirectories.push(directory);
+  const candidate = {
+    id: "new-learning",
+    kind: "learning" as const,
+    text: "Original candidate text.",
+    evidence: "fixture evidence",
+    source: "observed" as const,
+  };
+  const phase = new ScriptedPhaseExecutor([
+    {
+      phase: "wake",
+      payload: {
+        phase: "wake",
+        selectedMemoryIds: [longMemEvalMemoryId("evidence-session")],
+        summary: "Selected the evidence.",
+      },
+    },
+    {
+      phase: "work",
+      payload: {
+        phase: "work",
+        output: "CANARY-GREEN",
+        memoryCandidates: [candidate],
+        summary: "Answered from evidence.",
+      },
+    },
+    {
+      phase: "sleep",
+      payload: {
+        phase: "sleep",
+        writes: [
+          {
+            candidateId: candidate.id,
+            record: { ...candidate, text: "Changed candidate text." },
+          },
+        ],
+        summary: "Changed the candidate.",
+      },
+    },
+  ]);
+
+  const report = await runLongMemEvalPilot({
+    prepared: prepared(),
+    artifactDirectory: directory,
+    retrievalLimit: 1,
+    createExecutors() {
+      return {
+        baselineExecutor: new ScriptedBaselineExecutor(["I don't know."]),
+        directMemoryExecutor: new ScriptedDirectMemoryExecutor(["CANARY-GREEN"]),
+        phaseExecutor: phase,
+      };
+    },
+    model: {
+      provider: "scripted",
+      requestedId: "scripted",
+      resolvedId: "scripted",
+      thinkingLevel: "off",
+    },
+    source: { digest: "fixture" },
+    repository: { commit: "fixture", dirty: false },
+  });
+
+  const condition = report.items[0]?.conditions["cortex-bm25"];
+  assert.equal(condition?.status, "error");
+  assert.equal(report.retrieval.answerableCandidateItemsEvaluated, 1);
+  assert.equal(report.retrieval.answerableSelectionItemsEvaluated, 1);
+  assert.equal(report.retrieval.candidateFullRecall, 1);
+  assert.equal(report.retrieval.selectedFullRecall, 1);
+  assert.ok(condition?.evidence && "retrieval" in condition.evidence);
+  assert.equal(
+    condition?.evidence && "retrieval" in condition.evidence
+      ? condition.evidence.retrieval.selectedRecall
+      : undefined,
+    1,
+  );
+});
+
+test("does not treat a failed WAKE as an empty selection", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cortex-longmemeval-run-"));
+  temporaryDirectories.push(directory);
+
+  const report = await runLongMemEvalPilot({
+    prepared: prepared(),
+    artifactDirectory: directory,
+    retrievalLimit: 1,
+    createExecutors() {
+      return {
+        baselineExecutor: new ScriptedBaselineExecutor(["I don't know."]),
+        directMemoryExecutor: new ScriptedDirectMemoryExecutor(["CANARY-GREEN"]),
+        phaseExecutor: new ScriptedPhaseExecutor([
+          { phase: "wake", error: new Error("WAKE unavailable") },
+        ]),
+      };
+    },
+    model: {
+      provider: "scripted",
+      requestedId: "scripted",
+      resolvedId: "scripted",
+      thinkingLevel: "off",
+    },
+    source: { digest: "fixture" },
+    repository: { commit: "fixture", dirty: false },
+  });
+
+  const evidence = report.items[0]?.conditions["cortex-bm25"].evidence;
+  assert.equal(report.retrieval.answerableCandidateItemsEvaluated, 1);
+  assert.equal(report.retrieval.candidateFullRecall, 1);
+  assert.equal(report.retrieval.answerableSelectionItemsEvaluated, 0);
+  assert.equal(report.retrieval.selectedFullRecall, 0);
+  assert.equal(
+    evidence && "retrieval" in evidence
+      ? evidence.retrieval.selectionEvaluated
+      : undefined,
+    false,
+  );
+});
+
 test("partitions abstention retrieval by benchmark stratum", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cortex-longmemeval-run-"));
   temporaryDirectories.push(directory);
@@ -290,8 +412,8 @@ test("partitions abstention retrieval by benchmark stratum", async () => {
     repository: { commit: "fixture", dirty: false },
   });
 
-  assert.equal(report.retrieval.answerableItemsCompleted, 0);
-  assert.equal(report.retrieval.abstentionItemsCompleted, 1);
+  assert.equal(report.retrieval.answerableCandidateItemsEvaluated, 0);
+  assert.equal(report.retrieval.abstentionSelectionItemsEvaluated, 1);
   assert.equal(report.retrieval.abstentionItemsWithNoSelection, 1);
   assert.doesNotMatch(JSON.stringify(direct.calls), /_abs/);
   assert.doesNotMatch(JSON.stringify(phase.calls), /_abs/);

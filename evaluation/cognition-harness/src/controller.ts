@@ -27,7 +27,17 @@ import type {
 } from "./types.js";
 import { AllActiveMemoryRetriever } from "./memory-retriever.js";
 
+export interface LifecycleRunProgress {
+  runId: string;
+  task: string;
+  retrieval: SessionRunResult["retrieval"];
+  wake?: WakePayload;
+  work?: WorkPayload;
+}
+
 export class LifecycleRunError extends Error {
+  progress?: LifecycleRunProgress;
+
   constructor(
     readonly runId: string,
     readonly phase: Phase,
@@ -41,6 +51,8 @@ export class LifecycleRunError extends Error {
 }
 
 export class LifecycleObservationError extends Error {
+  progress?: LifecycleRunProgress;
+
   constructor(
     readonly runId: string,
     readonly phase: Phase,
@@ -58,6 +70,29 @@ export class LifecycleObservationError extends Error {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function throwWithProgress(
+  error: unknown,
+  phase: Phase,
+  receipts: readonly PhaseReceipt[],
+  progress: LifecycleRunProgress,
+): never {
+  if (
+    error instanceof LifecycleRunError ||
+    error instanceof LifecycleObservationError
+  ) {
+    error.progress = structuredClone(progress);
+    throw error;
+  }
+  const wrapped = new LifecycleRunError(
+    progress.runId,
+    phase,
+    structuredClone(receipts),
+    error,
+  );
+  wrapped.progress = structuredClone(progress);
+  throw wrapped;
 }
 
 function requireDistinct(values: readonly string[], field: string): void {
@@ -201,6 +236,11 @@ export class LifecycleController {
     });
     const retrievalLatencyMs = performance.now() - retrievalStartedAt;
     validateRetrieval(retrieval, memoryAtWake);
+    const retrievalEvidence: SessionRunResult["retrieval"] = {
+      ...structuredClone(retrieval),
+      totalActiveMemory: memoryAtWake.length,
+      latencyMs: retrievalLatencyMs,
+    };
     const activeMemoryById = new Map(
       memoryAtWake.map((record) => [record.id, record]),
     );
@@ -224,6 +264,17 @@ export class LifecycleController {
       wakeRequest,
       receipts,
       (payload) => validateWake(payload, candidateMemory),
+    ).catch((error: unknown) =>
+      throwWithProgress(
+        error,
+        "wake",
+        receipts,
+        {
+          runId,
+          task,
+          retrieval: retrievalEvidence,
+        },
+      ),
     );
     const wake = wakeExecution.payload;
     const recalledIds = new Set(wake.selectedMemoryIds);
@@ -237,7 +288,23 @@ export class LifecycleController {
       task,
       recalledMemory,
     };
-    const workExecution = await this.perform(workRequest, receipts, validateWork);
+    const workExecution = await this.perform(
+      workRequest,
+      receipts,
+      validateWork,
+    ).catch((error: unknown) =>
+      throwWithProgress(
+        error,
+        "work",
+        receipts,
+        {
+          runId,
+          task,
+          retrieval: retrievalEvidence,
+          wake,
+        },
+      ),
+    );
     const work = workExecution.payload;
 
     const sleepRequest: SleepRequest = {
@@ -264,6 +331,19 @@ export class LifecycleController {
           });
         }
       },
+    ).catch((error: unknown) =>
+      throwWithProgress(
+        error,
+        "sleep",
+        receipts,
+        {
+          runId,
+          task,
+          retrieval: retrievalEvidence,
+          wake,
+          work,
+        },
+      ),
     );
     const sleep = sleepExecution.payload;
     const memoryAfterSleep = sleepExecution.finalized;
@@ -288,11 +368,7 @@ export class LifecycleController {
       runId,
       task,
       output: work.output,
-      retrieval: {
-        ...structuredClone(retrieval),
-        totalActiveMemory: memoryAtWake.length,
-        latencyMs: retrievalLatencyMs,
-      },
+      retrieval: retrievalEvidence,
       wake,
       work,
       sleep,
@@ -323,17 +399,16 @@ export class LifecycleController {
   ): Promise<PhaseExecution & { payload: TPayload; finalized: TFinalized | undefined }> {
     const sequence = ++this.sequence;
     const startedAt = this.now().toISOString();
-    await this.sink.append({
-      type: "phase.started",
-      runId: request.runId,
-      phase: request.phase,
-      sequence,
-      timestamp: startedAt,
-    });
-
     let durableEffectApplied = false;
     let currentTelemetry: ExecutionTelemetry | undefined;
     try {
+      await this.sink.append({
+        type: "phase.started",
+        runId: request.runId,
+        phase: request.phase,
+        sequence,
+        timestamp: startedAt,
+      });
       const execution = await this.executor.execute(request);
       currentTelemetry = execution.telemetry;
       if (execution.payload.phase !== request.phase) {

@@ -339,7 +339,7 @@ async function benchmarkCommand(args: readonly string[]): Promise<void> {
     );
   }
   console.log(
-    `Cortex candidate full recall: ${report.retrieval.candidateFullRecall}/${report.retrieval.answerableItemsCompleted}`,
+    `Cortex candidate full recall: ${report.retrieval.candidateFullRecall}/${report.retrieval.answerableCandidateItemsEvaluated}`,
   );
   console.log(
     "Answer outputs are diagnostic only until scored with the official LongMemEval evaluator.",

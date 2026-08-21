@@ -358,6 +358,42 @@ test("reports observation failure separately after a successful SLEEP commit", a
   assert.equal(sink.events.some((event) => event.type === "phase.failed"), false);
 });
 
+test("retains progress when phase-start observation fails", async () => {
+  class FailingWorkStartSink implements EventSink {
+    async append(event: RunEvent): Promise<void> {
+      if (event.type === "phase.started" && event.phase === "work") {
+        throw new Error("injected WORK start failure");
+      }
+    }
+  }
+
+  const store = await createStore();
+  const executor = new ScriptedPhaseExecutor([
+    {
+      phase: "wake",
+      payload: {
+        phase: "wake",
+        selectedMemoryIds: [],
+        summary: "No memory.",
+      },
+    },
+  ]);
+  const controller = new LifecycleController(
+    executor,
+    store,
+    new FailingWorkStartSink(),
+  );
+
+  await assert.rejects(
+    controller.runSession("Observe phase progress."),
+    (error: unknown) =>
+      error instanceof LifecycleRunError &&
+      error.phase === "work" &&
+      error.receipts.length === 1 &&
+      error.progress?.wake?.phase === "wake",
+  );
+});
+
 test("CURATE proposals are recorded but never applied automatically", async () => {
   const store = await createStore();
   await store.applyWrites([

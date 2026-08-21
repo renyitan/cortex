@@ -7,7 +7,12 @@ import {
   writePrivateJsonExclusive,
   writePrivateTextExclusive,
 } from "./artifacts.js";
-import { LifecycleController } from "./controller.js";
+import {
+  LifecycleController,
+  LifecycleObservationError,
+  LifecycleRunError,
+  type LifecycleRunProgress,
+} from "./controller.js";
 import type {
   LoadedLongMemEvalPilot,
   LongMemEvalItem,
@@ -76,6 +81,8 @@ export interface LongMemEvalRetrievalScore {
   goldSessionIds: string[];
   candidateSessionIds: string[];
   selectedSessionIds: string[];
+  candidateEvaluated: boolean;
+  selectionEvaluated: boolean;
   candidateRecall: number | null;
   selectedRecall: number | null;
   selectedPrecision: number | null;
@@ -87,6 +94,16 @@ export interface LongMemEvalCortexEvidence {
   session: SessionRunResult;
   retrieval: LongMemEvalRetrievalScore;
 }
+
+export interface LongMemEvalCortexFailureEvidence {
+  importedMemoryCount: number;
+  progress?: LifecycleRunProgress;
+  retrieval: LongMemEvalRetrievalScore;
+}
+
+type LongMemEvalCortexReportEvidence =
+  | LongMemEvalCortexEvidence
+  | LongMemEvalCortexFailureEvidence;
 
 export interface LongMemEvalConditionReport {
   condition: LongMemEvalCondition;
@@ -101,11 +118,11 @@ export interface LongMemEvalConditionReport {
     name: string;
     message: string;
   };
-  evidence?: BaselineExecution | LongMemEvalCortexEvidence;
+  evidence?: BaselineExecution | LongMemEvalCortexReportEvidence;
 }
 
 export interface LongMemEvalItemReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   benchmark: "longmemeval-cleaned";
   questionId: string;
   questionType: LongMemEvalItem["question_type"];
@@ -132,13 +149,14 @@ export interface LongMemEvalConditionAggregate {
 }
 
 export interface LongMemEvalRetrievalAggregate {
-  answerableItemsCompleted: number;
+  answerableCandidateItemsEvaluated: number;
+  answerableSelectionItemsEvaluated: number;
   candidateFullRecall: number;
   selectedFullRecall: number;
   meanCandidateRecall: number | null;
   meanSelectedRecall: number | null;
   meanSelectedPrecision: number | null;
-  abstentionItemsCompleted: number;
+  abstentionSelectionItemsEvaluated: number;
   abstentionItemsWithNoSelection: number;
 }
 
@@ -167,7 +185,7 @@ export interface LongMemEvalRunManifest {
 }
 
 export interface LongMemEvalRunReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   benchmark: "longmemeval-cleaned";
   status: "completed" | "completed-with-errors";
   startedAt: string;
@@ -184,6 +202,16 @@ const CONDITION_ORDERS: readonly (readonly LongMemEvalCondition[])[] = [
   ["oracle", "cortex-bm25", "stateless"],
   ["cortex-bm25", "stateless", "oracle"],
 ];
+
+class LongMemEvalCortexConditionError extends Error {
+  constructor(
+    cause: unknown,
+    readonly evidence: LongMemEvalCortexFailureEvidence,
+  ) {
+    super(errorDetails(cause).message, { cause });
+    this.name = errorDetails(cause).name;
+  }
+}
 
 function conditionOrder(itemNumber: number): LongMemEvalCondition[] {
   return [...CONDITION_ORDERS[(itemNumber - 1) % CONDITION_ORDERS.length]!];
@@ -267,6 +295,8 @@ function scoreRetrieval(
   item: LongMemEvalItem,
   candidateMemoryIds: readonly string[],
   selectedMemoryIds: readonly string[],
+  candidateEvaluated = true,
+  selectionEvaluated = true,
 ): LongMemEvalRetrievalScore {
   const occurrences = new Map<string, number>();
   const memoryToSession = new Map<string, string>();
@@ -305,10 +335,18 @@ function scoreRetrieval(
     goldSessionIds: [...item.answer_session_ids],
     candidateSessionIds,
     selectedSessionIds,
-    candidateRecall: gold.size === 0 ? null : candidateHits / gold.size,
-    selectedRecall: gold.size === 0 ? null : selectedHits / gold.size,
+    candidateEvaluated,
+    selectionEvaluated,
+    candidateRecall:
+      !candidateEvaluated || gold.size === 0
+        ? null
+        : candidateHits / gold.size,
+    selectedRecall:
+      !selectionEvaluated || gold.size === 0 ? null : selectedHits / gold.size,
     selectedPrecision:
-      selectedSessionIds.length === 0
+      !selectionEvaluated
+        ? null
+        : selectedSessionIds.length === 0
         ? gold.size === 0
           ? 1
           : 0
@@ -342,7 +380,29 @@ async function runCortexCondition(
     undefined,
     new Bm25MemoryRetriever({ limit: retrievalLimit }),
   );
-  const session = await controller.runSession(longMemEvalTask(item));
+  let session: SessionRunResult;
+  try {
+    session = await controller.runSession(longMemEvalTask(item));
+  } catch (error) {
+    const progress =
+      error instanceof LifecycleRunError ||
+      error instanceof LifecycleObservationError
+        ? error.progress
+        : undefined;
+    throw new LongMemEvalCortexConditionError(error, {
+      importedMemoryCount: drafts.length,
+      ...(progress ? { progress } : {}),
+      retrieval: scoreRetrieval(
+        item,
+        progress?.retrieval.candidates.map(
+          (candidate) => candidate.memoryId,
+        ) ?? [],
+        progress?.wake?.selectedMemoryIds ?? [],
+        progress !== undefined,
+        progress?.wake !== undefined,
+      ),
+    });
+  }
   return {
     output: session.output,
     telemetry: sessionTelemetry([session], model),
@@ -397,6 +457,9 @@ async function captureCondition<T>(
       telemetry: collectErrorTelemetry(error, model),
       telemetryComplete: false,
       error: errorDetails(error),
+      ...(error instanceof LongMemEvalCortexConditionError
+        ? { evidence: error.evidence }
+        : {}),
     };
   }
 }
@@ -458,7 +521,7 @@ async function runItem(
       ]),
     ) as Record<LongMemEvalCondition, LongMemEvalConditionReport>;
     const report: LongMemEvalItemReport = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       benchmark: "longmemeval-cleaned",
       questionId: item.question_id,
       questionType: item.question_type,
@@ -532,7 +595,7 @@ async function runItem(
   }
 
   const report: LongMemEvalItemReport = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     benchmark: "longmemeval-cleaned",
     questionId: item.question_id,
     questionType: item.question_type,
@@ -596,10 +659,9 @@ function mean(values: readonly number[]): number | null {
 function aggregateRetrieval(
   reports: readonly LongMemEvalItemReport[],
 ): LongMemEvalRetrievalAggregate {
-  const completed = reports.flatMap((report) => {
+  const evaluated = reports.flatMap((report) => {
     const condition = report.conditions["cortex-bm25"];
     if (
-      condition.status !== "completed" ||
       !condition.evidence ||
       !("retrieval" in condition.evidence)
     ) {
@@ -607,18 +669,24 @@ function aggregateRetrieval(
     }
     return [{ stratum: report.stratum, retrieval: condition.evidence.retrieval }];
   });
-  const answerable = completed.filter(
-    ({ stratum }) => stratum !== "abstention",
+  const answerable = evaluated.filter(
+    ({ stratum, retrieval }) =>
+      stratum !== "abstention" && retrieval.candidateEvaluated,
   );
-  const abstention = completed.filter(
-    ({ stratum }) => stratum === "abstention",
+  const answerableSelections = answerable.filter(
+    ({ retrieval }) => retrieval.selectionEvaluated,
+  );
+  const abstentionSelections = evaluated.filter(
+    ({ stratum, retrieval }) =>
+      stratum === "abstention" && retrieval.selectionEvaluated,
   );
   return {
-    answerableItemsCompleted: answerable.length,
+    answerableCandidateItemsEvaluated: answerable.length,
+    answerableSelectionItemsEvaluated: answerableSelections.length,
     candidateFullRecall: answerable.filter(
       ({ retrieval }) => retrieval.candidateRecall === 1,
     ).length,
-    selectedFullRecall: answerable.filter(
+    selectedFullRecall: answerableSelections.filter(
       ({ retrieval }) => retrieval.selectedRecall === 1,
     ).length,
     meanCandidateRecall: mean(
@@ -627,7 +695,7 @@ function aggregateRetrieval(
       ),
     ),
     meanSelectedRecall: mean(
-      answerable.flatMap(({ retrieval }) =>
+      answerableSelections.flatMap(({ retrieval }) =>
         retrieval.selectedRecall === null ? [] : [retrieval.selectedRecall],
       ),
     ),
@@ -638,8 +706,8 @@ function aggregateRetrieval(
           : [retrieval.selectedPrecision],
       ),
     ),
-    abstentionItemsCompleted: abstention.length,
-    abstentionItemsWithNoSelection: abstention.filter(
+    abstentionSelectionItemsEvaluated: abstentionSelections.length,
+    abstentionItemsWithNoSelection: abstentionSelections.filter(
       ({ retrieval }) => retrieval.selectedSessionIds.length === 0,
     ).length,
   };
@@ -723,7 +791,7 @@ export async function runLongMemEvalPilot(
     ]),
   ) as Record<LongMemEvalCondition, LongMemEvalConditionAggregate>;
   const report: LongMemEvalRunReport = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     benchmark: "longmemeval-cleaned",
     status: reports.some((item) => item.status === "completed-with-errors")
       ? "completed-with-errors"
