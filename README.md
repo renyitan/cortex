@@ -1,11 +1,12 @@
 # cortex
 
-[![Project status: archived](https://img.shields.io/badge/status-archived-6e7781)](https://github.com/renyitan/cortex)
+[![Project status: active](https://img.shields.io/badge/status-active-2ea44f)](https://github.com/renyitan/cortex)
 [![CI](https://github.com/renyitan/cortex/actions/workflows/ci.yml/badge.svg)](https://github.com/renyitan/cortex/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> [!WARNING]
-> **Cortex is archived and frozen at version `0.33.0`.**
+> [!NOTE]
+> **Cortex is under active development.** Version `0.33.0` remains the latest reviewed plugin
+> baseline while newer evaluation and lifecycle work evolves on `main`.
 
 Cortex is a cognition framework for long-running coding agents. It packages a memory
 model, five procedural skills, and a small host adapter that binds those instructions to an agent's
@@ -126,7 +127,7 @@ behavior or task quality.
 | Path | Read this for |
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | Implemented components, startup flow, state ownership, and failure boundaries |
-| [`docs/findings.md`](docs/findings.md) | What `v0.33.0` establishes and what remains unproven |
+| [`docs/findings.md`](docs/findings.md) | Current evidence boundaries, including the reviewed `v0.33.0` baseline |
 | [`plugins/cortex/identity/capabilities.md`](plugins/cortex/identity/capabilities.md) | Enforcement levels and authority boundaries |
 | [`plugins/cortex/identity/memory-visibility.md`](plugins/cortex/identity/memory-visibility.md) | Canonical memory, projections, and retrieval visibility |
 | [`plugins/cortex/identity/cognition-events.md`](plugins/cortex/identity/cognition-events.md) | Local event schema and privacy floor |

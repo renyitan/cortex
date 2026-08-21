@@ -1,7 +1,9 @@
 # Findings and limitations
 
-This page is the concise conclusion for Cortex `v0.33.0`. It distinguishes
-properties exercised by checked-in tests from broader claims the project did not establish.
+This page records the evidence boundary for active Cortex development. Unless a later dated
+section says otherwise, implementation conclusions below apply to the reviewed `v0.33.0` plugin
+baseline. It distinguishes properties exercised by checked-in tests from broader claims the
+project has not established.
 
 ![Evidence boundary from deterministic tests and inspectable local mechanism evidence to the unestablished questions of model delivery, model use, and behavioral improvement](diagrams/evidence-boundary.png)
 
@@ -25,7 +27,7 @@ for test in tests/test-*; do "$test"; done
 
 ## Not established
 
-Cortex `v0.33.0` does not provide public evidence that:
+The reviewed `v0.33.0` baseline does not provide public evidence that:
 
 - recalled records consistently entered the model's context;
 - an LLM attended to or followed those records;
