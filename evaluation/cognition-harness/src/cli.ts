@@ -48,7 +48,7 @@ function printHelp(): void {
   console.log(`Cortex cognition harness
 
 Usage:
-  npm run harness -- auth login github-copilot
+  npm run harness -- auth login github-copilot [--domain github.com]
   npm run harness -- auth status
   npm run harness -- auth logout github-copilot
   npm run harness -- models list
@@ -138,6 +138,7 @@ async function authCommand(args: readonly string[]): Promise<void> {
   if (action !== "login" || args[1] !== PROVIDER) {
     throw new Error(`usage: auth login|logout ${PROVIDER}, or auth status`);
   }
+  const domain = option(args, "--domain");
 
   const abort = new AbortController();
   const onInterrupt = () => abort.abort(new Error("login cancelled"));
@@ -146,7 +147,16 @@ async function authCommand(args: readonly string[]): Promise<void> {
   try {
     await models.login(PROVIDER, "oauth", {
       signal: abort.signal,
-      prompt: (prompt) => answerPrompt(prompt, readline),
+      prompt: (prompt) => {
+        if (
+          domain !== undefined &&
+          prompt.type === "text" &&
+          prompt.message.startsWith("GitHub Enterprise URL/domain")
+        ) {
+          return Promise.resolve(domain === "github.com" ? "" : domain);
+        }
+        return answerPrompt(prompt, readline);
+      },
       notify: notifyAuth,
     });
     console.log(`\nGitHub Copilot credentials saved to ${credentials.path}`);
