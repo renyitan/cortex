@@ -3,3 +3,5 @@ node_modules/
 __pycache__/
 *.pyc
 .cortex/
+evaluation/cognition-harness/runs/
+evaluation/cognition-harness/auth.json
