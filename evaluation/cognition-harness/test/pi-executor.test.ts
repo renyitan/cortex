@@ -375,6 +375,7 @@ test("Pi phase executor binds selected SLEEP candidates without model copying", 
         ],
         summary: "Captured one mapping.",
       },
+      writePolicy: "allow",
     });
 
     assert.equal(
@@ -419,6 +420,7 @@ test("Pi phase executor accepts an empty SLEEP selection with no candidates", as
       memoryCandidates: [],
       summary: "No candidate.",
     },
+    writePolicy: "allow",
   });
 
   assert.deepEqual(
@@ -428,6 +430,71 @@ test("Pi phase executor accepts an empty SLEEP selection with no candidates", as
     [],
   );
   assert.equal(faux.getPendingResponseCount(), 0);
+});
+
+test("Pi phase executor repairs a prohibited SLEEP write", async () => {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall("submit_sleep", {
+        phase: "sleep",
+        writes: [{ candidateId: "unconfirmed-answer" }],
+        summary: "Attempted to persist the answer.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+    fauxAssistantMessage(
+      fauxToolCall("submit_sleep", {
+        phase: "sleep",
+        writes: [],
+        summary: "No externally confirmed learning.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+  ]);
+  const runner = new PiAgentRunner({
+    models,
+    model: faux.getModel(),
+    maxAttempts: 1,
+  });
+  const executor = new PiPhaseExecutor({
+    runner,
+    source: source(),
+    fixture: "test",
+  });
+
+  const execution = await executor.execute({
+    phase: "sleep",
+    runId: "run-1",
+    task: "Answer an unconfirmed question.",
+    mountedMemory: [],
+    recalledMemory: [],
+    work: {
+      phase: "work",
+      output: "67",
+      memoryCandidates: [
+        {
+          id: "unconfirmed-answer",
+          kind: "decision",
+          text: "The answer is 67.",
+          evidence: `evidence/chunk-001.txt#sha256=${"a".repeat(64)}`,
+          source: "observed",
+        },
+      ],
+      summary: "Answered from available evidence.",
+    },
+    writePolicy: "prohibit-unconfirmed",
+  });
+
+  assert.equal(execution.telemetry.turns, 2);
+  assert.deepEqual(
+    execution.payload.phase === "sleep"
+      ? execution.payload.writes
+      : undefined,
+    [],
+  );
 });
 
 test("Pi runner bounds attempts when the model never submits a receipt", async () => {

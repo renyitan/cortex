@@ -175,6 +175,7 @@ test("freezes an immutable balanced manifest and runs all conditions", async () 
       evidencePromptProjection: "id-and-text-only",
       memoryCandidateIdentity: "host-validated-unique-and-insert-only",
       memoryWriteBinding: "model-candidate-id-host-content-binding",
+      answerMemoryWrites: "prohibited-without-external-feedback",
       evidenceTopK: 10,
     },
     thresholds: {
@@ -376,6 +377,7 @@ test("stops before a model call can exceed the cost limit", async () => {
       evidencePromptProjection: "id-and-text-only",
       memoryCandidateIdentity: "host-validated-unique-and-insert-only",
       memoryWriteBinding: "model-candidate-id-host-content-binding",
+      answerMemoryWrites: "prohibited-without-external-feedback",
       evidenceTopK: 10,
     },
     thresholds: {

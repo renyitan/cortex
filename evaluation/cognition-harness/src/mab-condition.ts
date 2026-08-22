@@ -579,6 +579,7 @@ async function evaluateQuestion(
       const execution = await controller.runSession(question.prompt, {
         mountedMemory: await store.active(),
         evidence: retrievedEvidence,
+        sleepWrites: "prohibit-unconfirmed",
         workMemory: "complete-mounted",
       });
       output = execution.output;

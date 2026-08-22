@@ -69,6 +69,7 @@ export interface SleepRequest extends PhaseRequestBase {
   mountedMemory: readonly MemoryRecord[];
   recalledMemory: readonly MemoryRecord[];
   work: WorkPayload;
+  writePolicy: "allow" | "prohibit-unconfirmed";
 }
 
 export interface CurateRequest extends PhaseRequestBase {

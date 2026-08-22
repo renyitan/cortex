@@ -301,9 +301,10 @@ function createSleepTool(
   request: SleepRequest,
   accept: (payload: PhasePayload) => void,
 ): AgentTool {
-  const candidateIds = request.work.memoryCandidates.map(
-    (candidate) => candidate.id,
-  );
+  const candidateIds =
+    request.writePolicy === "allow"
+      ? request.work.memoryCandidates.map((candidate) => candidate.id)
+      : [];
   const candidateIdSchema =
     candidateIds.length > 0
       ? Type.String({ minLength: 1, enum: candidateIds })
@@ -485,8 +486,9 @@ function phaseGuidance(request: PhaseRequest): string {
       return [
         "Review the completed WORK result and its candidates.",
         "Use the supplied complete bounded memory and recalled memory only to detect whether a WORK memory candidate is already covered.",
-        "The isolated evaluation store is authorized for non-lossy writes from work.memoryCandidates only.",
-        "Select candidate IDs to persist; the host-controlled tool binds each selected candidate's exact ID, kind, text, evidence, and source.",
+        request.writePolicy === "allow"
+          ? "The isolated evaluation store is authorized for non-lossy writes from work.memoryCandidates only. Select candidate IDs to persist; the host-controlled tool binds each selected candidate's exact ID, kind, text, evidence, and source."
+          : "The current task supplied no external confirmation. Persist no WORK candidates and return an empty write list.",
         "Do not persist action logs, restatements, or candidates already covered by existing memory.",
         "Never replace an existing record. Use each candidate at most once; an empty write list is valid.",
       ].join(" ");
@@ -555,6 +557,7 @@ function phaseRequestForPrompt(request: PhaseRequest): object {
         mountedMemory: memoryForPrompt(request.mountedMemory),
         recalledMemory: memoryForPrompt(request.recalledMemory),
         work: request.work,
+        writePolicy: request.writePolicy,
       };
     case "curate":
       return {

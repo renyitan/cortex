@@ -82,6 +82,7 @@ const DEFAULT_MAB_EXECUTION: MabExecutionPolicy = {
   evidencePromptProjection: "id-and-text-only",
   memoryCandidateIdentity: "host-validated-unique-and-insert-only",
   memoryWriteBinding: "model-candidate-id-host-content-binding",
+  answerMemoryWrites: "prohibited-without-external-feedback",
   evidenceTopK: 10,
 };
 const THINKING_LEVELS: ReadonlySet<string> = new Set([

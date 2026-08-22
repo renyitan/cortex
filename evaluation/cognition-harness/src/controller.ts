@@ -38,6 +38,7 @@ export interface LifecycleSessionOptions {
   mountedMemory: readonly MemoryRecord[];
   evidence?: readonly EvidenceDocument[];
   curate?: boolean;
+  sleepWrites?: "allow" | "prohibit-unconfirmed";
   workMemory?: "wake-selected" | "complete-mounted";
 }
 
@@ -199,8 +200,12 @@ function validateSleep(
   payload: PhasePayload,
   candidates: readonly MemoryCandidate[],
   existingMemory: readonly MemoryRecord[],
+  writePolicy: SleepRequest["writePolicy"],
 ): SleepPayload {
   if (payload.phase !== "sleep") throw new Error(`expected sleep payload, received ${payload.phase}`);
+  if (writePolicy === "prohibit-unconfirmed" && payload.writes.length > 0) {
+    throw new Error("SLEEP cannot persist unconfirmed WORK output");
+  }
   const candidatesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   const existingIds = new Set(existingMemory.map((record) => record.id));
   const unsupported = payload.writes
@@ -357,11 +362,18 @@ export class LifecycleController {
       mountedMemory,
       recalledMemory,
       work,
+      writePolicy: options.sleepWrites ?? "allow",
     };
     const sleepExecution = await this.perform(
       sleepRequest,
       receipts,
-      (payload) => validateSleep(payload, work.memoryCandidates, memoryBeforeRun),
+      (payload) =>
+        validateSleep(
+          payload,
+          work.memoryCandidates,
+          memoryBeforeRun,
+          sleepRequest.writePolicy,
+        ),
       (payload) => this.store.applyWrites(payload.writes),
       async (_memoryAfterSleep, payload) => {
         if (payload.writes.length > 0) {

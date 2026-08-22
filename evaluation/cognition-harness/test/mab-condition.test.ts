@@ -104,7 +104,15 @@ function phases(): ScriptedPhaseStep[] {
       payload: {
         phase: "work",
         output: "28",
-        memoryCandidates: [],
+        memoryCandidates: [
+          {
+            id: "unconfirmed-answer",
+            kind: "decision",
+            text: "The answer is label 28.",
+            evidence: evidenceReference,
+            source: "observed",
+          },
+        ],
         summary: "Answered from complete memory.",
       },
     },
@@ -246,8 +254,11 @@ test("runs Cortex acquisition and answers with complete mounted memory", async (
   assert.equal(report.status, "completed");
   assert.equal(report.acquisition.memoryRecords, 1);
   assert.equal(report.correct, 1);
+  assert.equal(report.questions[0]?.memoryGrowth, 0);
   const acquisitionWork = phaseExecutor.calls[1];
   const evaluationWork = phaseExecutor.calls[4];
+  const acquisitionSleep = phaseExecutor.calls[2];
+  const evaluationSleep = phaseExecutor.calls[5];
   assert.equal(
     acquisitionWork?.phase === "work"
       ? acquisitionWork.memoryScope
@@ -271,6 +282,18 @@ test("runs Cortex acquisition and answers with complete mounted memory", async (
       ? evaluationWork.evidence[0]?.text
       : undefined,
     stream.chunks[0],
+  );
+  assert.equal(
+    acquisitionSleep?.phase === "sleep"
+      ? acquisitionSleep.writePolicy
+      : undefined,
+    "allow",
+  );
+  assert.equal(
+    evaluationSleep?.phase === "sleep"
+      ? evaluationSleep.writePolicy
+      : undefined,
+    "prohibit-unconfirmed",
   );
   phaseExecutor.assertExhausted();
 });

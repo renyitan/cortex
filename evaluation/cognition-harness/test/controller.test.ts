@@ -231,6 +231,64 @@ test("does not write memory when SLEEP fails", async () => {
   assert.equal(sink.events.at(-1)?.type, "phase.failed");
 });
 
+test("rejects unconfirmed WORK candidates when SLEEP writes are prohibited", async () => {
+  const store = await createStore();
+  const executor = new ScriptedPhaseExecutor([
+    {
+      phase: "wake",
+      payload: { phase: "wake", selectedMemoryIds: [], summary: "No memory." },
+    },
+    {
+      phase: "work",
+      payload: {
+        phase: "work",
+        output: "67",
+        summary: "Answered from available evidence.",
+        memoryCandidates: [
+          {
+            id: "unconfirmed-answer",
+            kind: "decision",
+            text: "The answer is 67.",
+            evidence: "fixture",
+            source: "observed",
+          },
+        ],
+      },
+    },
+    {
+      phase: "sleep",
+      payload: {
+        phase: "sleep",
+        summary: "Attempted to persist an unconfirmed answer.",
+        writes: [
+          {
+            candidateId: "unconfirmed-answer",
+            record: {
+              id: "unconfirmed-answer",
+              kind: "decision",
+              text: "The answer is 67.",
+              evidence: "fixture",
+              source: "observed",
+            },
+          },
+        ],
+      },
+    },
+  ]);
+  const controller = new LifecycleController(executor, store);
+
+  await assert.rejects(
+    runBoundedSession(controller, store, "Answer without feedback.", {
+      sleepWrites: "prohibit-unconfirmed",
+    }),
+    (error: unknown) =>
+      error instanceof LifecycleRunError &&
+      error.phase === "sleep" &&
+      error.message.includes("cannot persist unconfirmed WORK output"),
+  );
+  assert.deepEqual(await store.snapshot(), []);
+});
+
 test("does not complete SLEEP when the durable commit fails", async () => {
   class FailingMemoryStore extends AtomicMemoryStore {
     override async applyWrites(): Promise<never> {
