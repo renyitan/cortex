@@ -37,7 +37,6 @@ export interface LifecycleRunProgress {
 export interface LifecycleSessionOptions {
   mountedMemory: readonly MemoryRecord[];
   evidence?: readonly EvidenceDocument[];
-  allowedEvidenceReferences?: readonly string[];
   curate?: boolean;
   workMemory?: "wake-selected" | "complete-mounted";
 }
@@ -323,13 +322,19 @@ export class LifecycleController {
       task,
       recalledMemory: workMemory,
       evidence: structuredClone(options.evidence ?? []),
+      evidenceBinding:
+        options.evidence === undefined ? "free-form" : "verified-documents",
+      existingMemoryIds: mountedMemory.map((record) => record.id),
       memoryScope: options.workMemory ?? "wake-selected",
     };
     const workExecution = await this.perform(
       workRequest,
       receipts,
       (payload) =>
-        validateWork(payload, options.allowedEvidenceReferences),
+        validateWork(
+          payload,
+          options.evidence?.map((document) => document.reference),
+        ),
     ).catch((error: unknown) =>
       throwWithProgress(
         error,

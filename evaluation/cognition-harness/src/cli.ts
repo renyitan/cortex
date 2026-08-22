@@ -78,6 +78,10 @@ const DEFAULT_MAB_EXECUTION: MabExecutionPolicy = {
   questionIsolation: "fresh-runtime-and-cloned-store",
   evidenceRetention: "immutable-source-chunks-sha256",
   evidenceRetrieval: "shared-deterministic-bm25",
+  evidenceCitationSelection: "model-evidence-id-host-reference-binding",
+  evidencePromptProjection: "id-and-text-only",
+  memoryCandidateIdentity: "host-validated-unique-and-insert-only",
+  memoryWriteBinding: "model-candidate-id-host-content-binding",
   evidenceTopK: 10,
 };
 const THINKING_LEVELS: ReadonlySet<string> = new Set([

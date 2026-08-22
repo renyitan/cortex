@@ -140,7 +140,7 @@ test("rejects WORK memory candidates with unresolved evidence", async () => {
             id: "unsupported",
             kind: "learning",
             text: "A claim.",
-            evidence: "missing.txt#sha256=deadbeef",
+            evidence: `evidence/chunk-001.txt#sha256=${"a".repeat(52)}`,
             source: "observed",
           },
         ],
@@ -159,9 +159,6 @@ test("rejects WORK memory candidates with unresolved evidence", async () => {
           reference: `evidence/chunk-001.txt#sha256=${"a".repeat(64)}`,
           text: "Grounded evidence.",
         },
-      ],
-      allowedEvidenceReferences: [
-        `evidence/chunk-001.txt#sha256=${"a".repeat(64)}`,
       ],
     }),
     (error: unknown) =>

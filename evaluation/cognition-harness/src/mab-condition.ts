@@ -241,7 +241,7 @@ function acquisitionTask(
       : "a serially ordered knowledge pool in which later numbered facts supersede earlier conflicts";
   return `Acquire observation chunk ${index + 1}/${stream.chunks.length} for a delayed memory evaluation.
 
-This chunk contains ${role}. The future questions and answers are withheld. The source content is supplied as a verified evidence document. Any memory candidate derived from it must copy this exact evidence reference: ${document.reference}
+This chunk contains ${role}. The future questions and answers are withheld. The source content is supplied as a verified evidence document. Any memory candidate derived from it must select this evidence ID: ${document.id}. The harness binds that ID to its verified path and SHA-256 reference.
 
 Do not answer a future question.`;
 }
@@ -388,7 +388,6 @@ async function acquireCortex(
           {
             mountedMemory: await store.active(),
             evidence: [document],
-            allowedEvidenceReferences: [document.reference],
             workMemory: "complete-mounted",
           },
         ),
@@ -580,9 +579,6 @@ async function evaluateQuestion(
       const execution = await controller.runSession(question.prompt, {
         mountedMemory: await store.active(),
         evidence: retrievedEvidence,
-        allowedEvidenceReferences: retrievedEvidence.map(
-          (document) => document.reference,
-        ),
         workMemory: "complete-mounted",
       });
       output = execution.output;

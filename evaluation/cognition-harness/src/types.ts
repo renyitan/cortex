@@ -59,6 +59,8 @@ export interface WorkRequest extends PhaseRequestBase {
   phase: "work";
   recalledMemory: readonly MemoryRecord[];
   evidence: readonly EvidenceDocument[];
+  evidenceBinding: "free-form" | "verified-documents";
+  existingMemoryIds: readonly string[];
   memoryScope: "wake-selected" | "complete-mounted";
 }
 

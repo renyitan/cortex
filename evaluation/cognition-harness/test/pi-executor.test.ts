@@ -65,6 +65,371 @@ test("Pi phase executor accepts exactly one schema-valid completion tool receipt
   assert.equal(faux.getPendingResponseCount(), 0);
 });
 
+test("Pi phase executor binds a selected evidence ID to its canonical reference", async () => {
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall("submit_work", {
+          phase: "work",
+          output: "Observation acknowledged.",
+          memoryCandidates: [
+            {
+              id: "mapping",
+              kind: "learning",
+              text: "A failed disposable card maps to label 28.",
+              evidenceId: "evidence-1",
+              source: "observed",
+            },
+          ],
+          summary: "Captured one mapping.",
+        }),
+        { stopReason: "toolUse" },
+      ),
+    ]);
+    const runner = new PiAgentRunner({
+      models,
+      model: faux.getModel(),
+      maxAttempts: 1,
+    });
+    const executor = new PiPhaseExecutor({ runner, source: source(), fixture: "test" });
+    const reference = `evidence/chunk-001.txt#sha256=${"a".repeat(64)}`;
+
+    const execution = await executor.execute({
+      phase: "work",
+      runId: "run-1",
+      task: "Acquire the mapping.",
+      recalledMemory: [],
+      evidence: [
+        {
+          id: "evidence-1",
+          path: "evidence/chunk-001.txt",
+          sha256: "a".repeat(64),
+          reference,
+          text: "A failed disposable card maps to label 28.",
+        },
+      ],
+      evidenceBinding: "verified-documents",
+      existingMemoryIds: [],
+      memoryScope: "complete-mounted",
+    });
+
+    assert.equal(
+      execution.payload.phase === "work"
+        ? execution.payload.memoryCandidates[0]?.evidence
+        : undefined,
+      reference,
+    );
+    assert.equal(faux.getPendingResponseCount(), 0);
+  });
+
+test("Pi phase executor allows repair of an unknown evidence ID before acceptance", async () => {
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall("submit_work", {
+          phase: "work",
+          output: "Observation acknowledged.",
+          memoryCandidates: [
+            {
+              id: "mapping",
+              kind: "learning",
+              text: "A failed disposable card maps to label 28.",
+              evidenceId: "invented-evidence",
+              source: "observed",
+            },
+          ],
+          summary: "Captured one mapping.",
+        }),
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        fauxToolCall("submit_work", {
+          phase: "work",
+          output: "Observation acknowledged.",
+          memoryCandidates: [
+            {
+              id: "mapping",
+              kind: "learning",
+              text: "A failed disposable card maps to label 28.",
+              evidenceId: "evidence-1",
+              source: "observed",
+            },
+          ],
+          summary: "Captured one mapping with verified evidence.",
+        }),
+        { stopReason: "toolUse" },
+      ),
+    ]);
+    const runner = new PiAgentRunner({
+      models,
+      model: faux.getModel(),
+      maxAttempts: 1,
+    });
+    const executor = new PiPhaseExecutor({ runner, source: source(), fixture: "test" });
+
+    const execution = await executor.execute({
+      phase: "work",
+      runId: "run-1",
+      task: "Acquire the mapping.",
+      recalledMemory: [],
+      evidence: [
+        {
+          id: "evidence-1",
+          path: "evidence/chunk-001.txt",
+          sha256: "a".repeat(64),
+          reference: `evidence/chunk-001.txt#sha256=${"a".repeat(64)}`,
+          text: "A failed disposable card maps to label 28.",
+        },
+      ],
+      evidenceBinding: "verified-documents",
+      existingMemoryIds: [],
+      memoryScope: "complete-mounted",
+    });
+
+    assert.equal(execution.telemetry.turns, 2);
+    assert.equal(
+      execution.payload.phase === "work"
+        ? execution.payload.memoryCandidates[0]?.evidence
+        : undefined,
+      `evidence/chunk-001.txt#sha256=${"a".repeat(64)}`,
+    );
+  });
+
+test("Pi phase executor allows repair of a colliding memory candidate ID", async () => {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall("submit_work", {
+        phase: "work",
+        output: "Observation acknowledged.",
+        memoryCandidates: [
+          {
+            id: "existing-mapping",
+            kind: "learning",
+            text: "A failed disposable card maps to label 28.",
+            evidenceId: "evidence-1",
+            source: "observed",
+          },
+        ],
+        summary: "Used a colliding ID.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+    fauxAssistantMessage(
+      fauxToolCall("submit_work", {
+        phase: "work",
+        output: "Observation acknowledged.",
+        memoryCandidates: [
+          {
+            id: "new-mapping",
+            kind: "learning",
+            text: "A failed disposable card maps to label 28.",
+            evidenceId: "evidence-1",
+            source: "observed",
+          },
+        ],
+        summary: "Used a new ID.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+  ]);
+  const runner = new PiAgentRunner({
+    models,
+    model: faux.getModel(),
+    maxAttempts: 1,
+  });
+  const executor = new PiPhaseExecutor({ runner, source: source(), fixture: "test" });
+
+  const execution = await executor.execute({
+    phase: "work",
+    runId: "run-1",
+    task: "Acquire the mapping.",
+    recalledMemory: [],
+    evidence: [
+      {
+        id: "evidence-1",
+        path: "evidence/chunk-001.txt",
+        sha256: "a".repeat(64),
+        reference: `evidence/chunk-001.txt#sha256=${"a".repeat(64)}`,
+        text: "A failed disposable card maps to label 28.",
+      },
+    ],
+    evidenceBinding: "verified-documents",
+    existingMemoryIds: ["existing-mapping"],
+    memoryScope: "complete-mounted",
+  });
+
+  assert.equal(execution.telemetry.turns, 2);
+  assert.equal(
+    execution.payload.phase === "work"
+      ? execution.payload.memoryCandidates[0]?.id
+      : undefined,
+    "new-mapping",
+  );
+});
+
+test("Pi phase executor keeps verified binding when retrieval selects no evidence", async () => {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall("submit_work", {
+        phase: "work",
+        output: "No evidence supports an answer.",
+        memoryCandidates: [
+          {
+            id: "unsupported",
+            kind: "learning",
+            text: "An unsupported candidate.",
+            evidence: "free-form fallback",
+            source: "observed",
+          },
+        ],
+        summary: "Attempted an unsupported write.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+    fauxAssistantMessage(
+      fauxToolCall("submit_work", {
+        phase: "work",
+        output: "No evidence supports an answer.",
+        memoryCandidates: [],
+        summary: "Created no unsupported memory.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+  ]);
+  const runner = new PiAgentRunner({
+    models,
+    model: faux.getModel(),
+    maxAttempts: 1,
+  });
+  const executor = new PiPhaseExecutor({ runner, source: source(), fixture: "test" });
+
+  const execution = await executor.execute({
+    phase: "work",
+    runId: "run-1",
+    task: "Answer from retrieved evidence.",
+    recalledMemory: [],
+    evidence: [],
+    evidenceBinding: "verified-documents",
+    existingMemoryIds: [],
+    memoryScope: "complete-mounted",
+  });
+
+  assert.equal(execution.telemetry.turns, 2);
+  assert.deepEqual(
+    execution.payload.phase === "work"
+      ? execution.payload.memoryCandidates
+      : undefined,
+    [],
+  );
+});
+
+test("Pi phase executor binds selected SLEEP candidates without model copying", async () => {
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall("submit_sleep", {
+          phase: "sleep",
+          writes: [{ candidateId: "mapping" }],
+          summary: "Persist the mapping.",
+        }),
+        { stopReason: "toolUse" },
+      ),
+    ]);
+    const runner = new PiAgentRunner({
+      models,
+      model: faux.getModel(),
+      maxAttempts: 1,
+    });
+    const executor = new PiPhaseExecutor({ runner, source: source(), fixture: "test" });
+    const reference = `evidence/chunk-001.txt#sha256=${"a".repeat(64)}`;
+
+    const execution = await executor.execute({
+      phase: "sleep",
+      runId: "run-1",
+      task: "Persist the mapping.",
+      mountedMemory: [],
+      recalledMemory: [],
+      work: {
+        phase: "work",
+        output: "Observation acknowledged.",
+        memoryCandidates: [
+          {
+            id: "mapping",
+            kind: "learning",
+            text: "A failed disposable card maps to label 28.",
+            evidence: reference,
+            source: "observed",
+          },
+        ],
+        summary: "Captured one mapping.",
+      },
+    });
+
+    assert.equal(
+      execution.payload.phase === "sleep"
+        ? execution.payload.writes[0]?.record.evidence
+        : undefined,
+      reference,
+    );
+    assert.equal(faux.getPendingResponseCount(), 0);
+  });
+
+test("Pi phase executor accepts an empty SLEEP selection with no candidates", async () => {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall("submit_sleep", {
+        phase: "sleep",
+        writes: [],
+        summary: "No durable candidate.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+  ]);
+  const runner = new PiAgentRunner({
+    models,
+    model: faux.getModel(),
+    maxAttempts: 1,
+  });
+  const executor = new PiPhaseExecutor({ runner, source: source(), fixture: "test" });
+
+  const execution = await executor.execute({
+    phase: "sleep",
+    runId: "run-1",
+    task: "Do not persist anything.",
+    mountedMemory: [],
+    recalledMemory: [],
+    work: {
+      phase: "work",
+      output: "Done.",
+      memoryCandidates: [],
+      summary: "No candidate.",
+    },
+  });
+
+  assert.deepEqual(
+    execution.payload.phase === "sleep"
+      ? execution.payload.writes
+      : undefined,
+    [],
+  );
+  assert.equal(faux.getPendingResponseCount(), 0);
+});
+
 test("Pi runner bounds attempts when the model never submits a receipt", async () => {
   const faux = fauxProvider();
   const models = createModels();
@@ -196,6 +561,7 @@ test("Pi advisory executor returns voluntary memory candidates", async () => {
     model: faux.getModel(),
     maxAttempts: 1,
   });
+
   const advisory = new PiAdvisoryMemoryExecutor(runner, "test");
 
   const execution = await advisory.execute(
@@ -209,3 +575,52 @@ test("Pi advisory executor returns voluntary memory candidates", async () => {
   assert.equal(execution.telemetry.turns, 1);
   assert.equal(faux.getPendingResponseCount(), 0);
 });
+
+test("Pi advisory executor binds selected evidence IDs", async () => {
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall("submit_advisory", {
+          output: "Observation acknowledged.",
+          memoryCandidates: [
+            {
+              id: "banking-example",
+              kind: "learning",
+              text: "A failed disposable card maps to label 28.",
+              evidenceId: "evidence-1",
+              source: "observed",
+            },
+          ],
+          summary: "Voluntarily captured one learning.",
+        }),
+        { stopReason: "toolUse" },
+      ),
+    ]);
+    const runner = new PiAgentRunner({
+      models,
+      model: faux.getModel(),
+      maxAttempts: 1,
+    });
+    const advisory = new PiAdvisoryMemoryExecutor(runner, "test");
+    const reference = `evidence/chunk-001.txt#sha256=${"a".repeat(64)}`;
+
+    const execution = await advisory.execute(
+      "Learn this example.",
+      [],
+      "acquire",
+      [
+        {
+          id: "evidence-1",
+          path: "evidence/chunk-001.txt",
+          sha256: "a".repeat(64),
+          reference,
+          text: "A failed disposable card maps to label 28.",
+        },
+      ],
+    );
+
+    assert.equal(execution.memoryCandidates[0]?.evidence, reference);
+    assert.equal(faux.getPendingResponseCount(), 0);
+  });
