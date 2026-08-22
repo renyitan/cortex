@@ -85,6 +85,7 @@ const DEFAULT_MAB_EXECUTION: MabExecutionPolicy = {
   memoryWriteBinding: "model-candidate-id-host-content-binding",
   answerMemoryCandidates: "prohibited-without-external-feedback",
   answerMemoryWrites: "prohibited-without-external-feedback",
+  workEvidenceComparison: "structured-competing-claims",
   evidenceTopK: 10,
 };
 const THINKING_LEVELS: ReadonlySet<string> = new Set([

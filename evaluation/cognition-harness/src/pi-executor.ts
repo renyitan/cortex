@@ -477,6 +477,7 @@ function phaseGuidance(request: PhaseRequest): string {
     case "work":
       return [
         "Complete the task using only the supplied task, recalled memory, and verified evidence documents.",
+        "Before answering, identify the full relation or intent, compare plausible competing claims using their complete meaning rather than token frequency, and apply any stated recency or precedence rule independently at every reasoning hop. Do not answer Unknown until every supplied evidence document has been checked for each required hop.",
         request.memoryCandidatePolicy === "allow"
           ? "Capture a small memory candidate only for an explicit durable fact, decision, or demonstrated learning."
           : "The current task supplied no external confirmation, so return no memory candidates and focus only on the answer.",

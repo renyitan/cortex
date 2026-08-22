@@ -71,6 +71,7 @@ export interface MabExecutionPolicy {
   memoryWriteBinding: "model-candidate-id-host-content-binding";
   answerMemoryCandidates: "prohibited-without-external-feedback";
   answerMemoryWrites: "prohibited-without-external-feedback";
+  workEvidenceComparison: "structured-competing-claims";
   evidenceTopK: number;
 }
 
@@ -101,7 +102,7 @@ export interface MabManifestRun {
 }
 
 export interface MabBatchManifest {
-  schemaVersion: 6;
+  schemaVersion: 7;
   benchmark: {
     repository: typeof MAB_DATASET_REPOSITORY;
     revision: typeof MAB_DATASET_REVISION;
@@ -133,7 +134,7 @@ export interface MabBatchManifest {
     architecture: string;
   };
   protocol: {
-    adapter: "cortex-mab-v6";
+    adapter: "cortex-mab-v7";
     chunking: "semantic-units-o200k_base";
     scoring: "memory-agent-bench-upstream-compatible";
     execution: MabExecutionPolicy;
@@ -356,7 +357,7 @@ export async function freezeMabManifest(
     }
   }
   const manifest: MabBatchManifest = {
-    schemaVersion: 6,
+    schemaVersion: 7,
     benchmark: {
       repository: MAB_DATASET_REPOSITORY,
       revision: MAB_DATASET_REVISION,
@@ -406,7 +407,7 @@ export async function freezeMabManifest(
       architecture: process.arch,
     },
     protocol: {
-      adapter: "cortex-mab-v6",
+      adapter: "cortex-mab-v7",
       chunking: "semantic-units-o200k_base",
       scoring: "memory-agent-bench-upstream-compatible",
       execution: structuredClone(options.execution),
@@ -574,7 +575,7 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
   const questionSelection = value.questionSelection;
   const thresholds = value.thresholds;
   return (
-    value.schemaVersion === 6 &&
+    value.schemaVersion === 7 &&
     typeof value.batchId === "string" &&
     typeof value.createdAt === "string" &&
     (value.evidenceMode === "confirmatory" ||
@@ -640,7 +641,7 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
     typeof runtime.platform === "string" &&
     typeof runtime.architecture === "string" &&
     isRecord(protocol) &&
-    protocol.adapter === "cortex-mab-v6" &&
+    protocol.adapter === "cortex-mab-v7" &&
     protocol.chunking === "semantic-units-o200k_base" &&
     protocol.scoring === "memory-agent-bench-upstream-compatible" &&
     isRecord(protocol.execution) &&
@@ -665,6 +666,8 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
       "prohibited-without-external-feedback" &&
     protocol.execution.answerMemoryWrites ===
       "prohibited-without-external-feedback" &&
+    protocol.execution.workEvidenceComparison ===
+      "structured-competing-claims" &&
     typeof protocol.execution.evidenceTopK === "number" &&
     isRecord(thresholds) &&
     typeof thresholds.minimumAccuracyImprovement === "number" &&
