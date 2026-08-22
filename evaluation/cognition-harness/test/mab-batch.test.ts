@@ -176,6 +176,7 @@ test("freezes an immutable balanced manifest and runs all conditions", async () 
       evidencePromptProjection: "id-and-text-only",
       memoryCandidateIdentity: "host-validated-unique-and-insert-only",
       memoryWriteBinding: "model-candidate-id-host-content-binding",
+      answerMemoryCandidates: "prohibited-without-external-feedback",
       answerMemoryWrites: "prohibited-without-external-feedback",
       evidenceTopK: 10,
     },
@@ -205,7 +206,7 @@ test("freezes an immutable balanced manifest and runs all conditions", async () 
     /EEXIST/,
   );
   assert.equal((await readMabManifest(manifestPath)).runs.length, 5);
-  assert.equal(manifest.schemaVersion, 5);
+  assert.equal(manifest.schemaVersion, 6);
   assert.deepEqual(manifest.questionSelection, {
     strategy: "evenly-spaced-after-exclusions",
     excludedQuestionIds: [],
@@ -387,6 +388,7 @@ test("stops before a model call can exceed the cost limit", async () => {
       evidencePromptProjection: "id-and-text-only",
       memoryCandidateIdentity: "host-validated-unique-and-insert-only",
       memoryWriteBinding: "model-candidate-id-host-content-binding",
+      answerMemoryCandidates: "prohibited-without-external-feedback",
       answerMemoryWrites: "prohibited-without-external-feedback",
       evidenceTopK: 10,
     },

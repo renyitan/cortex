@@ -83,6 +83,7 @@ const DEFAULT_MAB_EXECUTION: MabExecutionPolicy = {
   evidencePromptProjection: "id-and-text-only",
   memoryCandidateIdentity: "host-validated-unique-and-insert-only",
   memoryWriteBinding: "model-candidate-id-host-content-binding",
+  answerMemoryCandidates: "prohibited-without-external-feedback",
   answerMemoryWrites: "prohibited-without-external-feedback",
   evidenceTopK: 10,
 };

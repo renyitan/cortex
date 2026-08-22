@@ -267,6 +267,12 @@ test("runs Cortex acquisition and answers with complete mounted memory", async (
   );
   assert.equal(
     acquisitionWork?.phase === "work"
+      ? acquisitionWork.memoryCandidatePolicy
+      : undefined,
+    "allow",
+  );
+  assert.equal(
+    acquisitionWork?.phase === "work"
       ? acquisitionWork.evidence[0]?.reference
       : undefined,
     evidenceReference,
@@ -282,6 +288,12 @@ test("runs Cortex acquisition and answers with complete mounted memory", async (
       ? evaluationWork.evidence[0]?.text
       : undefined,
     stream.chunks[0],
+  );
+  assert.equal(
+    evaluationWork?.phase === "work"
+      ? evaluationWork.memoryCandidatePolicy
+      : undefined,
+    "prohibit-unconfirmed",
   );
   assert.equal(
     acquisitionSleep?.phase === "sleep"

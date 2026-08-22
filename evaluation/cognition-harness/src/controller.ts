@@ -330,6 +330,10 @@ export class LifecycleController {
       evidenceBinding:
         options.evidence === undefined ? "free-form" : "verified-documents",
       existingMemoryIds: mountedMemory.map((record) => record.id),
+      memoryCandidatePolicy:
+        options.sleepWrites === "prohibit-unconfirmed"
+          ? "prohibit-unconfirmed"
+          : "allow",
       memoryScope: options.workMemory ?? "wake-selected",
     };
     const workExecution = await this.perform(

@@ -69,6 +69,7 @@ export interface MabExecutionPolicy {
   evidencePromptProjection: "id-and-text-only";
   memoryCandidateIdentity: "host-validated-unique-and-insert-only";
   memoryWriteBinding: "model-candidate-id-host-content-binding";
+  answerMemoryCandidates: "prohibited-without-external-feedback";
   answerMemoryWrites: "prohibited-without-external-feedback";
   evidenceTopK: number;
 }
@@ -100,7 +101,7 @@ export interface MabManifestRun {
 }
 
 export interface MabBatchManifest {
-  schemaVersion: 5;
+  schemaVersion: 6;
   benchmark: {
     repository: typeof MAB_DATASET_REPOSITORY;
     revision: typeof MAB_DATASET_REVISION;
@@ -132,7 +133,7 @@ export interface MabBatchManifest {
     architecture: string;
   };
   protocol: {
-    adapter: "cortex-mab-v5";
+    adapter: "cortex-mab-v6";
     chunking: "semantic-units-o200k_base";
     scoring: "memory-agent-bench-upstream-compatible";
     execution: MabExecutionPolicy;
@@ -355,7 +356,7 @@ export async function freezeMabManifest(
     }
   }
   const manifest: MabBatchManifest = {
-    schemaVersion: 5,
+    schemaVersion: 6,
     benchmark: {
       repository: MAB_DATASET_REPOSITORY,
       revision: MAB_DATASET_REVISION,
@@ -405,7 +406,7 @@ export async function freezeMabManifest(
       architecture: process.arch,
     },
     protocol: {
-      adapter: "cortex-mab-v5",
+      adapter: "cortex-mab-v6",
       chunking: "semantic-units-o200k_base",
       scoring: "memory-agent-bench-upstream-compatible",
       execution: structuredClone(options.execution),
@@ -573,7 +574,7 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
   const questionSelection = value.questionSelection;
   const thresholds = value.thresholds;
   return (
-    value.schemaVersion === 5 &&
+    value.schemaVersion === 6 &&
     typeof value.batchId === "string" &&
     typeof value.createdAt === "string" &&
     (value.evidenceMode === "confirmatory" ||
@@ -639,7 +640,7 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
     typeof runtime.platform === "string" &&
     typeof runtime.architecture === "string" &&
     isRecord(protocol) &&
-    protocol.adapter === "cortex-mab-v5" &&
+    protocol.adapter === "cortex-mab-v6" &&
     protocol.chunking === "semantic-units-o200k_base" &&
     protocol.scoring === "memory-agent-bench-upstream-compatible" &&
     isRecord(protocol.execution) &&
@@ -660,6 +661,8 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
       "host-validated-unique-and-insert-only" &&
     protocol.execution.memoryWriteBinding ===
       "model-candidate-id-host-content-binding" &&
+    protocol.execution.answerMemoryCandidates ===
+      "prohibited-without-external-feedback" &&
     protocol.execution.answerMemoryWrites ===
       "prohibited-without-external-feedback" &&
     typeof protocol.execution.evidenceTopK === "number" &&

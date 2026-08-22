@@ -112,6 +112,7 @@ test("Pi phase executor binds a selected evidence ID to its canonical reference"
       ],
       evidenceBinding: "verified-documents",
       existingMemoryIds: [],
+      memoryCandidatePolicy: "allow",
       memoryScope: "complete-mounted",
     });
 
@@ -187,6 +188,7 @@ test("Pi phase executor allows repair of an unknown evidence ID before acceptanc
       ],
       evidenceBinding: "verified-documents",
       existingMemoryIds: [],
+      memoryCandidatePolicy: "allow",
       memoryScope: "complete-mounted",
     });
 
@@ -262,6 +264,7 @@ test("Pi phase executor allows repair of a colliding memory candidate ID", async
     ],
     evidenceBinding: "verified-documents",
     existingMemoryIds: ["existing-mapping"],
+    memoryCandidatePolicy: "allow",
     memoryScope: "complete-mounted",
   });
 
@@ -321,6 +324,79 @@ test("Pi phase executor keeps verified binding when retrieval selects no evidenc
     evidence: [],
     evidenceBinding: "verified-documents",
     existingMemoryIds: [],
+    memoryCandidatePolicy: "allow",
+    memoryScope: "complete-mounted",
+  });
+
+  assert.equal(execution.telemetry.turns, 2);
+  assert.deepEqual(
+    execution.payload.phase === "work"
+      ? execution.payload.memoryCandidates
+      : undefined,
+    [],
+  );
+});
+
+test("Pi phase executor repairs an unconfirmed answer candidate", async () => {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall("submit_work", {
+        phase: "work",
+        output: "28",
+        memoryCandidates: [
+          {
+            id: "unconfirmed-answer",
+            kind: "decision",
+            text: "The answer is 28.",
+            evidenceId: "evidence-1",
+            source: "observed",
+          },
+        ],
+        summary: "Answered and attempted a candidate.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+    fauxAssistantMessage(
+      fauxToolCall("submit_work", {
+        phase: "work",
+        output: "28",
+        memoryCandidates: [],
+        summary: "Answered without an unconfirmed candidate.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+  ]);
+  const runner = new PiAgentRunner({
+    models,
+    model: faux.getModel(),
+    maxAttempts: 1,
+  });
+  const executor = new PiPhaseExecutor({
+    runner,
+    source: source(),
+    fixture: "test",
+  });
+
+  const execution = await executor.execute({
+    phase: "work",
+    runId: "run-1",
+    task: "Answer without feedback.",
+    recalledMemory: [],
+    evidence: [
+      {
+        id: "evidence-1",
+        path: "evidence/chunk-001.txt",
+        sha256: "a".repeat(64),
+        reference: `evidence/chunk-001.txt#sha256=${"a".repeat(64)}`,
+        text: "A failed disposable card maps to label 28.",
+      },
+    ],
+    evidenceBinding: "verified-documents",
+    existingMemoryIds: [],
+    memoryCandidatePolicy: "prohibit-unconfirmed",
     memoryScope: "complete-mounted",
   });
 

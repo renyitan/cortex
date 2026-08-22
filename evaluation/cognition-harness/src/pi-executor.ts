@@ -267,7 +267,11 @@ function createEvidenceWorkTool(
       phase: Type.Literal("work"),
       output: Type.String({ minLength: 1 }),
       memoryCandidates: Type.Array(evidenceCandidateSchema(request.evidence), {
-        maxItems: request.evidence.length > 0 ? 16 : 0,
+        maxItems:
+          request.memoryCandidatePolicy === "allow" &&
+          request.evidence.length > 0
+            ? 16
+            : 0,
       }),
       summary: Type.String({ minLength: 1 }),
     },
@@ -473,7 +477,9 @@ function phaseGuidance(request: PhaseRequest): string {
     case "work":
       return [
         "Complete the task using only the supplied task, recalled memory, and verified evidence documents.",
-        "Capture a small memory candidate only for an explicit durable fact, decision, or demonstrated learning.",
+        request.memoryCandidatePolicy === "allow"
+          ? "Capture a small memory candidate only for an explicit durable fact, decision, or demonstrated learning."
+          : "The current task supplied no external confirmation, so return no memory candidates and focus only on the answer.",
         request.evidenceBinding === "verified-documents"
           ? request.evidence.length > 0
             ? "Every memory candidate must select one supplied evidence ID; the host-controlled tool binds its canonical path-and-SHA-256 reference."
@@ -548,6 +554,7 @@ function phaseRequestForPrompt(request: PhaseRequest): object {
         recalledMemory: memoryForPrompt(request.recalledMemory),
         evidence: evidenceForPrompt(request.evidence),
         evidenceBinding: request.evidenceBinding,
+        memoryCandidatePolicy: request.memoryCandidatePolicy,
         memoryScope: request.memoryScope,
       };
     case "sleep":
