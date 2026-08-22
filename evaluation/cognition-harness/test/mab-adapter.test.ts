@@ -188,6 +188,33 @@ test("selects an even deterministic question count from every stream", () => {
   );
 });
 
+test("selects evenly from questions left after explicit exclusions", () => {
+  const streams = prepareMabStreams([
+    row(
+      "icl_banking77_5900shot_balance",
+      "card question\nlabel: 7",
+      6,
+    ),
+  ]);
+  const selected = selectMabQuestions(
+    streams,
+    3,
+    new Set([
+      "icl_banking77_5900shot_balance_no0",
+      "icl_banking77_5900shot_balance_no3",
+    ]),
+  );
+
+  assert.deepEqual(
+    selected.map((question) => question.qaPairId),
+    [
+      "icl_banking77_5900shot_balance_no1",
+      "icl_banking77_5900shot_balance_no4",
+      "icl_banking77_5900shot_balance_no5",
+    ],
+  );
+});
+
 test("flattens answer variants without changing their order", () => {
   assert.deepEqual(
     flattenMabAnswers([["first"], [["second", ["third"]]], "fourth"]),

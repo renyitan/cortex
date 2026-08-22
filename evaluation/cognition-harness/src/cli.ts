@@ -39,6 +39,7 @@ import {
 import {
   defaultMabThresholds,
   freezeMabManifest,
+  readMabQuestionIds,
   readMabManifest,
   runMabBatch,
   type MabBatchModel,
@@ -111,7 +112,7 @@ Usage:
   npm run harness -- fixture batch --trials <count> [--model gpt-5-mini] [--thinking low] [--runs-dir <path>]
   npm run harness -- mab prepare [--data-dir <path>]
   npm run harness -- mab smoke [--condition cortex] [--source factconsolidation_sh_6k] [--questions 1] [--model gpt-5-mini] [--thinking low]
-  npm run harness -- mab freeze [--questions 100] [--repetitions 3] [--maximum-cost-usd 25] [--manifest <path>] [--model gpt-5-mini] [--thinking low]
+  npm run harness -- mab freeze [--questions 100] [--repetitions 3] [--exclude-manifest <path>] [--maximum-cost-usd 25] [--manifest <path>] [--model gpt-5-mini] [--thinking low]
   npm run harness -- mab run --manifest <path> [--data-dir <path>] [--runs-dir <path>]
 
 Environment:
@@ -133,6 +134,19 @@ function option(args: readonly string[], name: string): string | undefined {
     throw new Error(`${name} requires a value`);
   }
   return value;
+}
+
+function optionValues(args: readonly string[], name: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== name) continue;
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) {
+      throw new Error(`${name} requires a value`);
+    }
+    values.push(value);
+  }
+  return values;
 }
 
 async function answerPrompt(
@@ -540,6 +554,13 @@ async function mabCommand(args: readonly string[]): Promise<void> {
       option(args, "--manifest") ??
         join(DEFAULT_MAB_RUNS_ROOT, "manifests", `${batchId}.json`),
     );
+    const excludedQuestionIds = (
+      await Promise.all(
+        optionValues(args, "--exclude-manifest").map((path) =>
+          readMabQuestionIds(resolve(path)),
+        ),
+      )
+    ).flat();
     const thresholds = {
       ...defaultMabThresholds(),
       maximumCostUsd: positiveNumberOptionOrDefault(
@@ -553,6 +574,7 @@ async function mabCommand(args: readonly string[]): Promise<void> {
       batchId,
       streams,
       questionsPerStream,
+      excludedQuestionIds,
       repetitions,
       model: mabModel(
         modelId,
@@ -571,6 +593,11 @@ async function mabCommand(args: readonly string[]): Promise<void> {
     console.log(
       `${manifest.runs.length} source repetitions, ${manifest.questionsPerStream} questions per stream, $${manifest.thresholds.maximumCostUsd.toFixed(2)} cap`,
     );
+    if (manifest.questionSelection.excludedQuestionIds.length > 0) {
+      console.log(
+        `Excluded ${manifest.questionSelection.excludedQuestionIds.length} previously used question IDs`,
+      );
+    }
     return;
   }
 

@@ -100,7 +100,7 @@ export interface MabManifestRun {
 }
 
 export interface MabBatchManifest {
-  schemaVersion: 4;
+  schemaVersion: 5;
   benchmark: {
     repository: typeof MAB_DATASET_REPOSITORY;
     revision: typeof MAB_DATASET_REVISION;
@@ -111,6 +111,10 @@ export interface MabBatchManifest {
   createdAt: string;
   evidenceMode: "confirmatory" | "instrumentation";
   questionsPerStream: number;
+  questionSelection: {
+    strategy: "evenly-spaced-after-exclusions";
+    excludedQuestionIds: string[];
+  };
   repetitions: number;
   chunkTokenLimit: number;
   conditions: readonly MabCondition[];
@@ -128,7 +132,7 @@ export interface MabBatchManifest {
     architecture: string;
   };
   protocol: {
-    adapter: "cortex-mab-v4";
+    adapter: "cortex-mab-v5";
     chunking: "semantic-units-o200k_base";
     scoring: "memory-agent-bench-upstream-compatible";
     execution: MabExecutionPolicy;
@@ -141,6 +145,7 @@ export interface MabFreezeOptions {
   batchId: string;
   streams: readonly MabPreparedStream[];
   questionsPerStream: number;
+  excludedQuestionIds?: readonly string[];
   repetitions: number;
   model: MabBatchModel;
   repository: MabBatchManifest["repository"];
@@ -259,8 +264,13 @@ function validateThresholds(thresholds: MabBatchThresholds): void {
 function selectedBySource(
   streams: readonly MabPreparedStream[],
   questionsPerStream: number,
+  excludedQuestionIds: ReadonlySet<string>,
 ): Map<MabSource, MabSelectedQuestion[]> {
-  const selected = selectMabQuestions(streams, questionsPerStream);
+  const selected = selectMabQuestions(
+    streams,
+    questionsPerStream,
+    excludedQuestionIds,
+  );
   const bySource = new Map<MabSource, MabSelectedQuestion[]>();
   for (const question of selected) {
     const existing = bySource.get(question.source) ?? [];
@@ -290,10 +300,28 @@ export async function freezeMabManifest(
   validatePositiveInteger(options.repetitions, "repetitions");
   validateThresholds(options.thresholds);
   assertCompleteSources(options.streams);
+  const excludedQuestionIds = [
+    ...new Set(options.excludedQuestionIds ?? []),
+  ].sort();
+  const excludedQuestionIdSet = new Set(excludedQuestionIds);
+  const availableQuestionIds = new Set(
+    options.streams.flatMap((stream) => stream.qaPairIds),
+  );
+  const unknownExcludedQuestionIds = excludedQuestionIds.filter(
+    (id) => !availableQuestionIds.has(id),
+  );
+  if (unknownExcludedQuestionIds.length > 0) {
+    throw new Error(
+      `excluded question IDs are not in the prepared streams: ${unknownExcludedQuestionIds.join(", ")}`,
+    );
+  }
   for (const stream of options.streams) {
-    if (stream.questions.length < options.questionsPerStream) {
+    const availableQuestions = stream.qaPairIds.filter(
+      (id) => !excludedQuestionIdSet.has(id),
+    ).length;
+    if (availableQuestions < options.questionsPerStream) {
       throw new Error(
-        `${stream.source} has ${stream.questions.length} questions, fewer than the requested ${options.questionsPerStream}`,
+        `${stream.source} has ${availableQuestions} questions after exclusions, fewer than the requested ${options.questionsPerStream}`,
       );
     }
   }
@@ -301,6 +329,7 @@ export async function freezeMabManifest(
   const bySource = selectedBySource(
     options.streams,
     options.questionsPerStream,
+    excludedQuestionIdSet,
   );
   const evidenceMode =
     options.repetitions >= 3 &&
@@ -326,7 +355,7 @@ export async function freezeMabManifest(
     }
   }
   const manifest: MabBatchManifest = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     benchmark: {
       repository: MAB_DATASET_REPOSITORY,
       revision: MAB_DATASET_REVISION,
@@ -342,6 +371,10 @@ export async function freezeMabManifest(
     createdAt: now().toISOString(),
     evidenceMode,
     questionsPerStream: options.questionsPerStream,
+    questionSelection: {
+      strategy: "evenly-spaced-after-exclusions",
+      excludedQuestionIds,
+    },
     repetitions: options.repetitions,
     chunkTokenLimit: MAB_CHUNK_TOKEN_LIMIT,
     conditions: MAB_CONDITIONS,
@@ -372,7 +405,7 @@ export async function freezeMabManifest(
       architecture: process.arch,
     },
     protocol: {
-      adapter: "cortex-mab-v4",
+      adapter: "cortex-mab-v5",
       chunking: "semantic-units-o200k_base",
       scoring: "memory-agent-bench-upstream-compatible",
       execution: structuredClone(options.execution),
@@ -434,6 +467,25 @@ function validateManifestStreams(
   const streamBySource = new Map(
     streams.map((stream) => [stream.source, stream]),
   );
+  const excludedQuestionIds = new Set(
+    manifest.questionSelection.excludedQuestionIds,
+  );
+  if (
+    excludedQuestionIds.size !==
+    manifest.questionSelection.excludedQuestionIds.length
+  ) {
+    throw new Error("manifest contains duplicate excluded question IDs");
+  }
+  const availableQuestionIds = new Set(
+    streams.flatMap((stream) => stream.qaPairIds),
+  );
+  if (
+    manifest.questionSelection.excludedQuestionIds.some(
+      (id) => !availableQuestionIds.has(id),
+    )
+  ) {
+    throw new Error("manifest excludes an unknown question ID");
+  }
   for (const frozen of manifest.streams) {
     const prepared = streamBySource.get(frozen.source);
     if (!prepared) {
@@ -450,7 +502,11 @@ function validateManifestStreams(
     if (
       questionIds.length !== manifest.questionsPerStream ||
       new Set(questionIds).size !== questionIds.length ||
-      questionIds.some((id) => !prepared.qaPairIds.includes(id))
+      questionIds.some(
+        (id) =>
+          excludedQuestionIds.has(id) ||
+          !prepared.qaPairIds.includes(id),
+      )
     ) {
       throw new Error(`manifest questions are invalid for ${frozen.source}`);
     }
@@ -514,14 +570,19 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
   const repository = value.repository;
   const runtime = value.runtime;
   const protocol = value.protocol;
+  const questionSelection = value.questionSelection;
   const thresholds = value.thresholds;
   return (
-    value.schemaVersion === 4 &&
+    value.schemaVersion === 5 &&
     typeof value.batchId === "string" &&
     typeof value.createdAt === "string" &&
     (value.evidenceMode === "confirmatory" ||
       value.evidenceMode === "instrumentation") &&
     typeof value.questionsPerStream === "number" &&
+    isRecord(questionSelection) &&
+    questionSelection.strategy ===
+      "evenly-spaced-after-exclusions" &&
+    isStringArray(questionSelection.excludedQuestionIds) &&
     typeof value.repetitions === "number" &&
     typeof value.chunkTokenLimit === "number" &&
     Array.isArray(value.conditions) &&
@@ -578,7 +639,7 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
     typeof runtime.platform === "string" &&
     typeof runtime.architecture === "string" &&
     isRecord(protocol) &&
-    protocol.adapter === "cortex-mab-v4" &&
+    protocol.adapter === "cortex-mab-v5" &&
     protocol.chunking === "semantic-units-o200k_base" &&
     protocol.scoring === "memory-agent-bench-upstream-compatible" &&
     isRecord(protocol.execution) &&
@@ -609,6 +670,34 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
     typeof thresholds.maximumCostUsd === "number" &&
     typeof thresholds.bootstrapSamples === "number"
   );
+}
+
+export async function readMabQuestionIds(path: string): Promise<string[]> {
+  const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+  if (!isRecord(parsed) || !Array.isArray(parsed.streams)) {
+    throw new Error("invalid MemoryAgentBench manifest question list");
+  }
+  const questionIds = parsed.streams.flatMap((stream) => {
+    if (!isRecord(stream) || !Array.isArray(stream.questions)) {
+      throw new Error("invalid MemoryAgentBench manifest question list");
+    }
+    return stream.questions.map((question) => {
+      if (
+        !isRecord(question) ||
+        typeof question.id !== "string" ||
+        question.id.length === 0
+      ) {
+        throw new Error("invalid MemoryAgentBench manifest question list");
+      }
+      return question.id;
+    });
+  });
+  if (new Set(questionIds).size !== questionIds.length) {
+    throw new Error(
+      "MemoryAgentBench manifest question list contains duplicates",
+    );
+  }
+  return questionIds;
 }
 
 export async function readMabManifest(

@@ -553,30 +553,42 @@ function evenlySpacedIndices(length: number, count: number): number[] {
 export function selectMabQuestions(
   streams: readonly MabPreparedStream[],
   countPerStream: number,
+  excludedQuestionIds: ReadonlySet<string> = new Set(),
 ): MabSelectedQuestion[] {
   if (!Number.isInteger(countPerStream) || countPerStream < 0) {
     throw new Error("countPerStream must be a non-negative integer");
   }
-  return streams.flatMap((stream) =>
-    evenlySpacedIndices(stream.questions.length, countPerStream).map(
-      (questionIndex) => ({
-        source: stream.source,
-        task: stream.task,
-        stratum: stream.stratum,
-        hop: stream.hop,
-        contextHash: stream.contextHash,
-        questionIndex,
-        question: stream.questions[questionIndex]!,
-        answers: [...stream.answers[questionIndex]!],
-        qaPairId: stream.qaPairIds[questionIndex]!,
-        metric: mabMetricForSource(stream.source),
-        prompt: formatMabQueryPrompt(
-          stream.source,
-          stream.questions[questionIndex]!,
-        ),
-      }),
-    ),
-  );
+  return streams.flatMap((stream) => {
+    const availableIndices = stream.qaPairIds.flatMap((id, index) =>
+      excludedQuestionIds.has(id) ? [] : [index],
+    );
+    if (availableIndices.length < countPerStream) {
+      throw new Error(
+        `${stream.source} has ${availableIndices.length} questions after exclusions, fewer than the requested ${countPerStream}`,
+      );
+    }
+    return evenlySpacedIndices(availableIndices.length, countPerStream).map(
+      (availableIndex) => {
+        const questionIndex = availableIndices[availableIndex]!;
+        return {
+          source: stream.source,
+          task: stream.task,
+          stratum: stream.stratum,
+          hop: stream.hop,
+          contextHash: stream.contextHash,
+          questionIndex,
+          question: stream.questions[questionIndex]!,
+          answers: [...stream.answers[questionIndex]!],
+          qaPairId: stream.qaPairIds[questionIndex]!,
+          metric: mabMetricForSource(stream.source),
+          prompt: formatMabQueryPrompt(
+            stream.source,
+            stream.questions[questionIndex]!,
+          ),
+        };
+      },
+    );
+  });
 }
 
 export function formatMabQueryPrompt(

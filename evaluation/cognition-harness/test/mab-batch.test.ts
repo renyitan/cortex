@@ -12,6 +12,7 @@ import {
 import {
   defaultMabThresholds,
   freezeMabManifest,
+  readMabQuestionIds,
   readMabManifest,
   runMabBatch,
 } from "../src/mab-batch.js";
@@ -204,6 +205,15 @@ test("freezes an immutable balanced manifest and runs all conditions", async () 
     /EEXIST/,
   );
   assert.equal((await readMabManifest(manifestPath)).runs.length, 5);
+  assert.equal(manifest.schemaVersion, 5);
+  assert.deepEqual(manifest.questionSelection, {
+    strategy: "evenly-spaced-after-exclusions",
+    excludedQuestionIds: [],
+  });
+  assert.deepEqual(
+    await readMabQuestionIds(manifestPath),
+    MAB_SELECTED_SOURCES.map((source) => `${source}_no0`),
+  );
   assert.deepEqual(
     manifest.runs.map((run) => run.conditionOrder),
     [
