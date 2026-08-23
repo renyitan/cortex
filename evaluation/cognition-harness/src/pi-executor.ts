@@ -36,6 +36,7 @@ import type {
   PhaseRequest,
   SleepPayload,
   SleepRequest,
+  WakeRequest,
   WakePayload,
   WorkRequest,
   WorkPayload,
@@ -52,18 +53,6 @@ const memoryDraftSchema = Type.Object(
       Type.Literal("observed"),
       Type.Literal("imported"),
     ]),
-  },
-  { additionalProperties: false },
-);
-
-const wakeSchema = Type.Object(
-  {
-    phase: Type.Literal("wake"),
-    selectedMemoryIds: Type.Array(Type.String({ minLength: 1 }), {
-      maxItems: 12,
-      uniqueItems: true,
-    }),
-    summary: Type.String({ minLength: 1 }),
   },
   { additionalProperties: false },
 );
@@ -178,18 +167,41 @@ function acceptedResult(summary: string) {
   };
 }
 
-function createWakeTool(accept: (payload: PhasePayload) => void): AgentTool<typeof wakeSchema> {
-  return {
+function createWakeTool(
+  request: WakeRequest,
+  accept: (payload: PhasePayload) => void,
+): AgentTool {
+  const memoryIdSchema =
+    request.memory.length > 0
+      ? Type.String({
+          minLength: 1,
+          enum: request.memory.map((record) => record.id),
+        })
+      : Type.String({ minLength: 1 });
+  const parameters = Type.Object(
+    {
+      phase: Type.Literal("wake"),
+      selectedMemoryIds: Type.Array(memoryIdSchema, {
+        maxItems: Math.min(12, request.memory.length),
+        uniqueItems: true,
+      }),
+      summary: Type.String({ minLength: 1 }),
+    },
+    { additionalProperties: false },
+  );
+  const tool: AgentTool<typeof parameters> = {
     name: "submit_wake",
     label: "Submit WAKE receipt",
-    description: "Submit the one final, schema-valid WAKE receipt.",
-    parameters: wakeSchema,
+    description:
+      "Select only mounted active memory IDs and submit the final WAKE receipt.",
+    parameters,
     async execute(_toolCallId, params) {
       const payload: WakePayload = params;
       accept(payload);
       return acceptedResult("WAKE receipt accepted.");
     },
   };
+  return tool;
 }
 
 function createWorkTool(accept: (payload: PhasePayload) => void): AgentTool<typeof workSchema> {
@@ -456,7 +468,7 @@ function completionTool(
 ): AgentTool {
   switch (request.phase) {
     case "wake":
-      return createWakeTool(accept);
+      return createWakeTool(request, accept);
     case "work":
       return request.evidenceBinding === "verified-documents"
         ? createEvidenceWorkTool(request, accept)

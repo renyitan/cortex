@@ -75,6 +75,7 @@ const DEFAULT_MAB_EXECUTION: MabExecutionPolicy = {
   maxAttempts: 2,
   maxTurns: 3,
   timeoutMs: 300_000,
+  wakeIdentitySelection: "model-memory-id-host-active-record-binding",
   workMemory: "complete-mounted",
   questionIsolation: "fresh-runtime-and-cloned-store",
   evidenceRetention: "immutable-source-chunks-sha256",

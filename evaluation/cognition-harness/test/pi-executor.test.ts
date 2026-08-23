@@ -65,6 +65,63 @@ test("Pi phase executor accepts exactly one schema-valid completion tool receipt
   assert.equal(faux.getPendingResponseCount(), 0);
 });
 
+test("Pi phase executor allows repair of an unknown WAKE memory ID", async () => {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall("submit_wake", {
+        phase: "wake",
+        selectedMemoryIds: ["invented-memory"],
+        summary: "Selected an invented memory.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+    fauxAssistantMessage(
+      fauxToolCall("submit_wake", {
+        phase: "wake",
+        selectedMemoryIds: ["known-memory"],
+        summary: "Selected mounted memory.",
+      }),
+      { stopReason: "toolUse" },
+    ),
+  ]);
+  const runner = new PiAgentRunner({
+    models,
+    model: faux.getModel(),
+    maxAttempts: 1,
+  });
+  const executor = new PiPhaseExecutor({ runner, source: source(), fixture: "test" });
+
+  const execution = await executor.execute({
+    phase: "wake",
+    runId: "run-1",
+    task: "Recall relevant memory.",
+    memory: [
+      {
+        id: "known-memory",
+        kind: "learning",
+        text: "Known memory.",
+        evidence: "fixture",
+        source: "observed",
+        status: "active",
+        createdAt: "2026-08-22T00:00:00.000Z",
+        updatedAt: "2026-08-22T00:00:00.000Z",
+      },
+    ],
+  });
+
+  assert.equal(execution.telemetry.turns, 2);
+  assert.deepEqual(
+    execution.payload.phase === "wake"
+      ? execution.payload.selectedMemoryIds
+      : undefined,
+    ["known-memory"],
+  );
+  assert.equal(faux.getPendingResponseCount(), 0);
+});
+
 test("Pi phase executor binds a selected evidence ID to its canonical reference", async () => {
     const faux = fauxProvider();
     const models = createModels();

@@ -168,6 +168,7 @@ test("freezes an immutable balanced manifest and runs all conditions", async () 
       maxAttempts: 2,
       maxTurns: 3,
       timeoutMs: 10_000,
+      wakeIdentitySelection: "model-memory-id-host-active-record-binding",
       workMemory: "complete-mounted",
       questionIsolation: "fresh-runtime-and-cloned-store",
       evidenceRetention: "immutable-source-chunks-sha256",
@@ -208,7 +209,7 @@ test("freezes an immutable balanced manifest and runs all conditions", async () 
     /EEXIST/,
   );
   assert.equal((await readMabManifest(manifestPath)).runs.length, 5);
-  assert.equal(manifest.schemaVersion, 8);
+  assert.equal(manifest.schemaVersion, 9);
   assert.deepEqual(manifest.questionSelection, {
     strategy: "evenly-spaced-after-exclusions",
     excludedQuestionIds: [],
@@ -382,6 +383,7 @@ test("stops before a model call can exceed the cost limit", async () => {
       maxAttempts: 2,
       maxTurns: 3,
       timeoutMs: 10_000,
+      wakeIdentitySelection: "model-memory-id-host-active-record-binding",
       workMemory: "complete-mounted",
       questionIsolation: "fresh-runtime-and-cloned-store",
       evidenceRetention: "immutable-source-chunks-sha256",
