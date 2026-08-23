@@ -95,8 +95,8 @@ function phases(): ScriptedPhaseStep[] {
       phase: "wake",
       payload: {
         phase: "wake",
-        selectedMemoryIds: [],
-        summary: "Selection is diagnostic only.",
+        selectedMemoryIds: ["label-28"],
+        summary: "Selected the relevant mapping.",
       },
     },
     {
@@ -226,7 +226,7 @@ test("runs advisory acquisition and delayed use with isolated calls", async () =
   assert.equal(answer.calls[0]?.mode, "answer");
 });
 
-test("runs Cortex acquisition and answers with complete mounted memory", async () => {
+test("runs Cortex acquisition with complete memory and answers with WAKE-selected memory", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cortex-mab-condition-"));
   temporaryDirectories.push(directory);
   const phaseExecutor = new ScriptedPhaseExecutor(phases());
@@ -279,9 +279,15 @@ test("runs Cortex acquisition and answers with complete mounted memory", async (
   );
   assert.equal(
     evaluationWork?.phase === "work"
-      ? evaluationWork.recalledMemory[0]?.text
+      ? evaluationWork.memoryScope
       : undefined,
-    "A failed disposable card maps to label 28.",
+    "wake-selected",
+  );
+  assert.deepEqual(
+    evaluationWork?.phase === "work"
+      ? evaluationWork.recalledMemory.map((record) => record.text)
+      : undefined,
+    ["A failed disposable card maps to label 28."],
   );
   assert.equal(
     evaluationWork?.phase === "work"

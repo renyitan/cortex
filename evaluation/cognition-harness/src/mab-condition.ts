@@ -580,7 +580,7 @@ async function evaluateQuestion(
         mountedMemory: await store.active(),
         evidence: retrievedEvidence,
         sleepWrites: "prohibit-unconfirmed",
-        workMemory: "complete-mounted",
+        workMemory: "wake-selected",
       });
       output = execution.output;
       telemetry = sessionTelemetry([execution], options.model);

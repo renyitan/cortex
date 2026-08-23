@@ -62,7 +62,8 @@ export interface MabExecutionPolicy {
   maxTurns: number;
   timeoutMs: number;
   wakeIdentitySelection: "model-memory-id-host-active-record-binding";
-  workMemory: "complete-mounted";
+  acquisitionWorkMemory: "complete-mounted";
+  answerWorkMemory: "wake-selected";
   questionIsolation: "fresh-runtime-and-cloned-store";
   evidenceRetention: "immutable-source-chunks-sha256";
   evidenceRetrieval: "shared-deterministic-bm25";
@@ -104,7 +105,7 @@ export interface MabManifestRun {
 }
 
 export interface MabBatchManifest {
-  schemaVersion: 9;
+  schemaVersion: 10;
   benchmark: {
     repository: typeof MAB_DATASET_REPOSITORY;
     revision: typeof MAB_DATASET_REVISION;
@@ -136,7 +137,7 @@ export interface MabBatchManifest {
     architecture: string;
   };
   protocol: {
-    adapter: "cortex-mab-v9";
+    adapter: "cortex-mab-v10";
     chunking: "semantic-units-o200k_base";
     scoring: "memory-agent-bench-upstream-compatible";
     execution: MabExecutionPolicy;
@@ -359,7 +360,7 @@ export async function freezeMabManifest(
     }
   }
   const manifest: MabBatchManifest = {
-    schemaVersion: 9,
+    schemaVersion: 10,
     benchmark: {
       repository: MAB_DATASET_REPOSITORY,
       revision: MAB_DATASET_REVISION,
@@ -409,7 +410,7 @@ export async function freezeMabManifest(
       architecture: process.arch,
     },
     protocol: {
-      adapter: "cortex-mab-v9",
+      adapter: "cortex-mab-v10",
       chunking: "semantic-units-o200k_base",
       scoring: "memory-agent-bench-upstream-compatible",
       execution: structuredClone(options.execution),
@@ -577,7 +578,7 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
   const questionSelection = value.questionSelection;
   const thresholds = value.thresholds;
   return (
-    value.schemaVersion === 9 &&
+    value.schemaVersion === 10 &&
     typeof value.batchId === "string" &&
     typeof value.createdAt === "string" &&
     (value.evidenceMode === "confirmatory" ||
@@ -643,7 +644,7 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
     typeof runtime.platform === "string" &&
     typeof runtime.architecture === "string" &&
     isRecord(protocol) &&
-    protocol.adapter === "cortex-mab-v9" &&
+    protocol.adapter === "cortex-mab-v10" &&
     protocol.chunking === "semantic-units-o200k_base" &&
     protocol.scoring === "memory-agent-bench-upstream-compatible" &&
     isRecord(protocol.execution) &&
@@ -652,7 +653,8 @@ function isMabManifest(value: unknown): value is MabBatchManifest {
     typeof protocol.execution.timeoutMs === "number" &&
     protocol.execution.wakeIdentitySelection ===
       "model-memory-id-host-active-record-binding" &&
-    protocol.execution.workMemory === "complete-mounted" &&
+    protocol.execution.acquisitionWorkMemory === "complete-mounted" &&
+    protocol.execution.answerWorkMemory === "wake-selected" &&
     protocol.execution.questionIsolation ===
       "fresh-runtime-and-cloned-store" &&
     protocol.execution.evidenceRetention ===
