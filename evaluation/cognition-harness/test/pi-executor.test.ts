@@ -508,6 +508,55 @@ test("Pi phase executor accepts an empty SLEEP selection with no candidates", as
   assert.equal(faux.getPendingResponseCount(), 0);
 });
 
+test("Pi phase executor completes prohibited empty SLEEP without a model call", async () => {
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const runner = new PiAgentRunner({
+    models,
+    model: faux.getModel(),
+    maxAttempts: 1,
+  });
+  let sourceLoads = 0;
+  const executor = new PiPhaseExecutor({
+    runner,
+    source: {
+      async load(phase) {
+        sourceLoads += 1;
+        return source().load(phase);
+      },
+    },
+    fixture: "test",
+  });
+
+  const execution = await executor.execute({
+    phase: "sleep",
+    runId: "run-1",
+    task: "Answer an unconfirmed question.",
+    mountedMemory: [],
+    recalledMemory: [],
+    work: {
+      phase: "work",
+      output: "67",
+      memoryCandidates: [],
+      summary: "Answered from available evidence.",
+    },
+    writePolicy: "prohibit-unconfirmed",
+  });
+
+  assert.deepEqual(execution.payload, {
+    phase: "sleep",
+    writes: [],
+    summary:
+      "SLEEP completed deterministically because no memory candidate was eligible to persist.",
+  });
+  assert.equal(execution.telemetry.attempts, 0);
+  assert.equal(execution.telemetry.turns, 0);
+  assert.equal(execution.telemetry.usage.totalTokens, 0);
+  assert.equal(sourceLoads, 0);
+  assert.equal(faux.getPendingResponseCount(), 0);
+});
+
 test("Pi phase executor repairs a prohibited SLEEP write", async () => {
   const faux = fauxProvider();
   const models = createModels();

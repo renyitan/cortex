@@ -178,6 +178,7 @@ test("freezes an immutable balanced manifest and runs all conditions", async () 
       memoryWriteBinding: "model-candidate-id-host-content-binding",
       answerMemoryCandidates: "prohibited-without-external-feedback",
       answerMemoryWrites: "prohibited-without-external-feedback",
+      answerSleepExecution: "deterministic-empty-when-no-candidates",
       workEvidenceComparison: "structured-competing-claims",
       evidenceTopK: 10,
     },
@@ -207,7 +208,7 @@ test("freezes an immutable balanced manifest and runs all conditions", async () 
     /EEXIST/,
   );
   assert.equal((await readMabManifest(manifestPath)).runs.length, 5);
-  assert.equal(manifest.schemaVersion, 7);
+  assert.equal(manifest.schemaVersion, 8);
   assert.deepEqual(manifest.questionSelection, {
     strategy: "evenly-spaced-after-exclusions",
     excludedQuestionIds: [],
@@ -391,6 +392,7 @@ test("stops before a model call can exceed the cost limit", async () => {
       memoryWriteBinding: "model-candidate-id-host-content-binding",
       answerMemoryCandidates: "prohibited-without-external-feedback",
       answerMemoryWrites: "prohibited-without-external-feedback",
+      answerSleepExecution: "deterministic-empty-when-no-candidates",
       workEvidenceComparison: "structured-competing-claims",
       evidenceTopK: 10,
     },

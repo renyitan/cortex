@@ -18,6 +18,7 @@ import {
   type PiAgentRunnerOptions,
 } from "./pi-agent-runner.js";
 import type { PiTraceSink } from "./pi-trace.js";
+import { zeroTelemetry } from "./telemetry.js";
 import type {
   BaselineExecution,
   BaselineExecutor,
@@ -596,6 +597,21 @@ export class PiPhaseExecutor implements PhaseExecutor {
   }
 
   async execute(request: PhaseRequest): Promise<PhaseExecution> {
+    if (
+      request.phase === "sleep" &&
+      request.writePolicy === "prohibit-unconfirmed" &&
+      request.work.memoryCandidates.length === 0
+    ) {
+      return {
+        payload: {
+          phase: "sleep",
+          writes: [],
+          summary:
+            "SLEEP completed deterministically because no memory candidate was eligible to persist.",
+        },
+        telemetry: zeroTelemetry("cortex-controller"),
+      };
+    }
     const source = await this.source.load(request.phase);
     const result = await this.runner.run<PhasePayload>({
       systemPrompt: phaseSystemPrompt(request, source),
