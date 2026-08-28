@@ -778,7 +778,7 @@ export async function readMabManifest(
   return manifest;
 }
 
-function streamForManifest(
+export function streamForManifest(
   prepared: MabPreparedStream,
   manifest: MabManifestStream,
 ): MabStream {

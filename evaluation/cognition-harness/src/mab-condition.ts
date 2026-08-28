@@ -148,7 +148,7 @@ export interface MabConditionReport {
   telemetry: ExecutionTelemetry;
 }
 
-interface AcquisitionResult {
+export interface MabAcquisitionResult {
   report: MabAcquisitionReport;
   memory: MemoryDraft[];
 }
@@ -220,7 +220,9 @@ function recordsToDrafts(records: readonly MemoryRecord[]): MemoryDraft[] {
     }));
 }
 
-function rawMemory(evidence: readonly EvidenceDocument[]): MemoryDraft[] {
+export function createRawMabMemory(
+  evidence: readonly EvidenceDocument[],
+): MemoryDraft[] {
   return evidence.map((document) => ({
     id: document.id,
     kind: "learning",
@@ -250,9 +252,9 @@ async function acquireRegular(
   options: MabConditionOptions,
   evidence: MabEvidenceSnapshot,
   now: () => Date,
-): Promise<AcquisitionResult> {
+): Promise<MabAcquisitionResult> {
   const startedAt = now().toISOString();
-  const memory = rawMemory(evidence.documents);
+  const memory = createRawMabMemory(evidence.documents);
   await writePrivateJson(
     join(options.artifactDirectory, "memory.json"),
     { schemaVersion: 1, records: memory },
@@ -279,7 +281,7 @@ async function acquireAdvisory(
   options: MabConditionOptions,
   evidence: MabEvidenceSnapshot,
   now: () => Date,
-): Promise<AcquisitionResult> {
+): Promise<MabAcquisitionResult> {
   const startedAt = now().toISOString();
   const telemetry: ExecutionTelemetry[] = [];
   const memory: MemoryDraft[] = [];
@@ -359,7 +361,7 @@ async function acquireCortex(
   options: MabConditionOptions,
   evidence: MabEvidenceSnapshot,
   now: () => Date,
-): Promise<AcquisitionResult> {
+): Promise<MabAcquisitionResult> {
   const startedAt = now().toISOString();
   const sessions: SessionRunResult[] = [];
   const directory = join(options.artifactDirectory, "acquisition");
@@ -438,11 +440,11 @@ async function acquireCortex(
   }
 }
 
-async function acquire(
+export async function acquireMabMemory(
   options: MabConditionOptions,
   evidence: MabEvidenceSnapshot,
   now: () => Date,
-): Promise<AcquisitionResult> {
+): Promise<MabAcquisitionResult> {
   if (options.condition === "regular") {
     return acquireRegular(options, evidence, now);
   }
@@ -634,11 +636,11 @@ export async function runMabCondition(
   const artifactDirectory = resolve(options.artifactDirectory);
   await mkdir(artifactDirectory, { recursive: true, mode: 0o700 });
   const startedAt = now().toISOString();
-  let acquisition: AcquisitionResult;
+  let acquisition: MabAcquisitionResult;
   let evidence: MabEvidenceSnapshot | undefined;
   try {
     evidence = await persistMabEvidence(artifactDirectory, options.stream);
-    acquisition = await acquire(
+    acquisition = await acquireMabMemory(
       { ...options, artifactDirectory },
       evidence,
       now,

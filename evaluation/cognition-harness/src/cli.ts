@@ -53,6 +53,13 @@ import {
   type MabStream,
 } from "./mab-condition.js";
 import {
+  freezeMabCausalManifest,
+  MAB_CAUSAL_ARMS,
+  readMabCausalManifest,
+  readQuestionManifestSelection,
+  runMabCausalBatch,
+} from "./mab-causal.js";
+import {
   projectEmberTrialId,
   runProjectEmberBatch,
 } from "./project-ember-batch.js";
@@ -119,6 +126,8 @@ Usage:
   npm run harness -- mab smoke [--condition cortex] [--source factconsolidation_sh_6k] [--questions 1] [--model gpt-5-mini] [--thinking low]
   npm run harness -- mab freeze [--questions 100] [--repetitions 3] [--exclude-manifest <path>] [--maximum-cost-usd 25] [--manifest <path>] [--model gpt-5-mini] [--thinking low]
   npm run harness -- mab run --manifest <path> [--data-dir <path>] [--runs-dir <path>]
+  npm run harness -- mab causal-freeze --questions-from <exposed-manifest> --forbid-questions-from <holdout-manifest> [--questions 10] [--repetitions 3] [--maximum-cost-usd 4] [--manifest <path>] [--model gpt-5-mini] [--thinking low]
+  npm run harness -- mab causal-run --manifest <path> [--data-dir <path>] [--runs-dir <path>]
 
 Environment:
   CORTEX_HARNESS_AUTH_FILE  Override the external credential file
@@ -450,8 +459,20 @@ function printMabStreams(streams: readonly MabPreparedStream[]): void {
 
 async function mabCommand(args: readonly string[]): Promise<void> {
   const action = args[0];
-  if (!action || !["prepare", "smoke", "freeze", "run"].includes(action)) {
-    throw new Error("usage: mab prepare|smoke|freeze|run [options]");
+  if (
+    !action ||
+    ![
+      "prepare",
+      "smoke",
+      "freeze",
+      "run",
+      "causal-freeze",
+      "causal-run",
+    ].includes(action)
+  ) {
+    throw new Error(
+      "usage: mab prepare|smoke|freeze|run|causal-freeze|causal-run [options]",
+    );
   }
   const dataDirectory = resolve(
     option(args, "--data-dir") ?? DEFAULT_MAB_DATA_DIRECTORY,
@@ -469,6 +490,192 @@ async function mabCommand(args: readonly string[]): Promise<void> {
   const source = await sourceLoader.snapshot();
   const sourceManifest = source.manifest();
   const credentials = new PrivateFileCredentialStore();
+
+  if (action === "causal-freeze") {
+    const questionsFrom = option(args, "--questions-from");
+    if (!questionsFrom) {
+      throw new Error(
+        "mab causal-freeze requires --questions-from <exposed-manifest>",
+      );
+    }
+    const forbiddenPaths = optionValues(
+      args,
+      "--forbid-questions-from",
+    );
+    if (forbiddenPaths.length === 0) {
+      throw new Error(
+        "mab causal-freeze requires --forbid-questions-from <holdout-manifest>",
+      );
+    }
+    const questionsPerSource = positiveIntegerOptionOrDefault(
+      args,
+      "--questions",
+      10,
+    );
+    const repetitions = positiveIntegerOptionOrDefault(
+      args,
+      "--repetitions",
+      3,
+    );
+    const modelId = option(args, "--model") ?? "gpt-5-mini";
+    const thinking = option(args, "--thinking") ?? "low";
+    if (!isThinkingLevel(thinking)) {
+      throw new Error(`invalid thinking level: ${thinking}`);
+    }
+    const modelContext = await resolveGitHubCopilotModel(
+      credentials,
+      modelId,
+    );
+    const repository = await requiredRepositoryState(
+      sourceLoader.repositoryRoot,
+    );
+    if (repository.dirty) {
+      throw new Error(
+        "refusing to freeze against a dirty Cortex worktree; commit the diagnostic harness first",
+      );
+    }
+    const exposed = await readQuestionManifestSelection(
+      resolve(questionsFrom),
+    );
+    const forbidden = await Promise.all(
+      forbiddenPaths.map((path) =>
+        readQuestionManifestSelection(resolve(path)),
+      ),
+    );
+    const batchId = `mab-causal-${new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
+    const manifestPath = resolve(
+      option(args, "--manifest") ??
+        join(
+          DEFAULT_MAB_RUNS_ROOT,
+          "causal-manifests",
+          `${batchId}.json`,
+        ),
+    );
+    const manifest = await freezeMabCausalManifest({
+      manifestPath,
+      batchId,
+      streams,
+      exposedQuestionIds: exposed.questionIds,
+      exposedManifestSha256: exposed.sha256,
+      forbiddenQuestionIds: forbidden.flatMap(
+        (entry) => entry.questionIds,
+      ),
+      forbiddenManifestSha256: forbidden.map(
+        (entry) => entry.sha256,
+      ),
+      questionsPerSource,
+      repetitions,
+      model: mabModel(
+        modelId,
+        thinking,
+        modelContext,
+        DEFAULT_MAB_EXECUTION,
+      ),
+      repository,
+      source: sourceManifest,
+      execution: DEFAULT_MAB_EXECUTION,
+      thresholds: {
+        confidenceLevel: 0.95,
+        maximumFailureRate: 0.05,
+        maximumCostUsd: positiveNumberOptionOrDefault(
+          args,
+          "--maximum-cost-usd",
+          4,
+        ),
+        bootstrapSamples: 10_000,
+      },
+    });
+    console.log(
+      `Frozen causal manifest: ${relative(process.cwd(), manifestPath) || manifestPath}`,
+    );
+    console.log(
+      `${manifest.runs.length} source repetitions, ${manifest.questionsPerSource} exposed questions per source, ${manifest.arms.length} arms, $${manifest.thresholds.maximumCostUsd.toFixed(2)} cap`,
+    );
+    return;
+  }
+
+  if (action === "causal-run") {
+    const manifestPath = option(args, "--manifest");
+    if (!manifestPath) {
+      throw new Error(
+        "mab causal-run requires --manifest <path>",
+      );
+    }
+    const manifest = await readMabCausalManifest(
+      resolve(manifestPath),
+    );
+    if (!isThinkingLevel(manifest.model.requestedThinkingLevel)) {
+      throw new Error(
+        `frozen thinking level is unsupported: ${manifest.model.requestedThinkingLevel}`,
+      );
+    }
+    if (!isThinkingLevel(manifest.model.effectiveThinkingLevel)) {
+      throw new Error(
+        `frozen effective thinking level is unsupported: ${manifest.model.effectiveThinkingLevel}`,
+      );
+    }
+    const modelContext = await resolveGitHubCopilotModel(
+      credentials,
+      manifest.model.requestedId,
+    );
+    const execution = {
+      model: mabModel(
+        manifest.model.requestedId,
+        manifest.model.requestedThinkingLevel,
+        modelContext,
+        manifest.protocol.execution,
+      ),
+      repository: await requiredRepositoryState(
+        sourceLoader.repositoryRoot,
+      ),
+      source: sourceManifest,
+    };
+    const artifactDirectory = runDirectory(
+      resolve(
+        option(args, "--runs-dir") ??
+          join(DEFAULT_MAB_RUNS_ROOT, "causal"),
+      ),
+    );
+    const report = await runMabCausalBatch({
+      artifactDirectory,
+      manifest,
+      streams,
+      execution,
+      createExecutors: mabRuntimeFactory(
+        credentials,
+        manifest.model.requestedId,
+        manifest.model.effectiveThinkingLevel,
+        source,
+        manifest.protocol.execution,
+        modelContext,
+      ),
+    });
+    console.log(
+      `Artifacts: ${relative(process.cwd(), artifactDirectory) || artifactDirectory}`,
+    );
+    for (const arm of MAB_CAUSAL_ARMS) {
+      const aggregate = report.aggregates[arm];
+      console.log(
+        `${arm}: ${aggregate.correct}/${aggregate.questions} correct, ${aggregate.errors} errors, $${aggregate.telemetry.usage.costUsd.toFixed(6)} answer cost`,
+      );
+    }
+    console.log(
+      `Shared semantic acquisition: $${report.acquisitionTelemetry.usage.costUsd.toFixed(6)}`,
+    );
+    for (const contrast of report.contrasts) {
+      console.log(
+        `${contrast.id}: ${(contrast.difference * 100).toFixed(1)} pp, ${(contrast.confidenceLevel * 100).toFixed(0)}% CI [${(contrast.lower * 100).toFixed(1)}, ${(contrast.upper * 100).toFixed(1)}]`,
+      );
+    }
+    const checksPassed = Object.values(report.checks).every(Boolean);
+    console.log(`Checks: ${checksPassed ? "PASS" : "FAIL"}`);
+    if (report.status !== "completed" || !checksPassed) {
+      process.exitCode = 1;
+    }
+    return;
+  }
 
   if (action === "smoke") {
     const condition = mabConditionOption(args);
