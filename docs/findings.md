@@ -25,6 +25,36 @@ scripts/cortex-lint
 for test in tests/test-*; do "$test"; done
 ```
 
+## Pi-harness evaluation (2026-08-27)
+
+An evaluation-only Pi controller enforced `WAKE -> WORK -> SLEEP` around adapted
+MemoryAgentBench acquisition and delayed-use tasks. Regular, advisory, and Pi-enforced Cortex
+received the same immutable source evidence and deterministic BM25 retrieval. The frozen
+instrumentation pilot sampled 20 questions from each of five streams, used three repetitions, and
+retained every planned question in the denominator.
+
+| Condition | Correct | Accuracy | Execution errors | Recorded cost |
+|---|---:|---:|---:|---:|
+| Regular evidence use | 254/300 | 84.7% | 0 | `$2.0328` |
+| Pi-enforced Cortex | 246/300 | 82.0% | 0 | `$4.0669` |
+| Voluntary advisory guidance | 235/300 | 78.3% | 2 | `$3.6149` |
+
+Cortex trailed regular by 2.7 percentage points; the clustered 95% interval was -6.3 to +0.3
+points. It led advisory by 3.7 points, with an interval of -0.7 to +8.7 points. The frozen
+positive-result rule was not met.
+
+The controller completed all 300 Cortex evaluations without a lifecycle or citation error and
+prevented unconfirmed answer-time memory writes. Cortex nevertheless used 1.95 times regular's
+tokens and 2.00 times its recorded cost without improving aggregate accuracy. Its deficit was
+concentrated in the two multi-hop streams.
+
+This is a bounded negative result, not standard MemoryAgentBench leaderboard evidence. The pilot
+used 20 of 100 questions per stream and is not confirmatory. It does not establish enforcement by
+the current host adapters, beneficial `CURATE`, superior retrieval, coding-task improvement,
+production reliability, or cross-model generalization. Within those boundaries, the result shows
+that the Pi controller enforced the procedure, but the evaluated formation-and-use treatment did
+not establish better delayed-task outcomes than both controls.
+
 ## Not established
 
 The reviewed `v0.33.0` baseline does not provide public evidence that:
