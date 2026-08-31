@@ -1,7 +1,5 @@
 # Cortex
 
-[![Project status: research complete](https://img.shields.io/badge/status-research%20complete-6f42c1)](docs/investigation/conclusion.md)
-[![CI](https://github.com/renyitan/cortex/actions/workflows/ci.yml/badge.svg)](https://github.com/renyitan/cortex/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > [!IMPORTANT]
