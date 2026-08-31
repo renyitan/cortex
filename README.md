@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > [!IMPORTANT]
-> **Cortex is a completed experimental investigation. Development is parked.** Controlled
+> **Cortex is archived, and development is parked.** Controlled
 > evaluations did not show that Cortex improved task results over giving the same evidence directly
 > to the model. The repository is public so its implementation, evaluation methods, and negative
 > results can be inspected and reused.
