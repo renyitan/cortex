@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -26,7 +26,31 @@ import {
   resolveGitHubCopilotModel,
   type GitHubCopilotModelContext,
 } from "./pi-executor.js";
+import { PiAgentRunner } from "./pi-agent-runner.js";
 import { JsonlPiTraceSink } from "./pi-trace.js";
+import { LosslessFormationExecutor } from "./lossless-formation-executor.js";
+import {
+  canonicalJson,
+  publishPrivateJsonWriteOnce,
+  sha256Text,
+} from "./lossless-memory.js";
+import {
+  LOSSLESS_ANSWER_MAX_ATTEMPTS,
+  LOSSLESS_ANSWER_MAX_TURNS,
+  LOSSLESS_TIMEOUT_MS,
+  LosslessAnswerExecutor,
+  captureLosslessSourceFiles,
+  finalizeTerminalInstrument,
+  freezeLosslessRunManifest,
+  loadFrozenLosslessFixture,
+  readLosslessFormationStageReport,
+  readLosslessInstrumentReport,
+  readLosslessRunManifest,
+  runLosslessFormationStage,
+  runLosslessInstrument,
+  runLosslessTreatmentStage,
+  type LosslessModelSpec,
+} from "./lossless-formation-eval.js";
 import {
   countMabTokens,
   isMabSource,
@@ -64,6 +88,7 @@ import {
 const executeFile = promisify(execFile);
 const PROVIDER = "github-copilot";
 const HARNESS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const EXECUTING_REPOSITORY_ROOT = resolve(HARNESS_ROOT, "../..");
 const DEFAULT_RUNS_ROOT = join(HARNESS_ROOT, "runs");
 const DEFAULT_MAB_DATA_DIRECTORY = join(
   HARNESS_ROOT,
@@ -71,6 +96,10 @@ const DEFAULT_MAB_DATA_DIRECTORY = join(
   "memory-agent-bench",
 );
 const DEFAULT_MAB_RUNS_ROOT = join(DEFAULT_RUNS_ROOT, "memory-agent-bench");
+const DEFAULT_LOSSLESS_RUNS_ROOT = join(
+  DEFAULT_RUNS_ROOT,
+  "lossless-memory-formation",
+);
 const DEFAULT_MAB_EXECUTION: MabExecutionPolicy = {
   maxAttempts: 2,
   maxTurns: 3,
@@ -119,6 +148,11 @@ Usage:
   npm run harness -- mab smoke [--condition cortex] [--source factconsolidation_sh_6k] [--questions 1] [--model gpt-5-mini] [--thinking low]
   npm run harness -- mab freeze [--questions 100] [--repetitions 3] [--exclude-manifest <path>] [--maximum-cost-usd 25] [--manifest <path>] [--model gpt-5-mini] [--thinking low]
   npm run harness -- mab run --manifest <path> [--data-dir <path>] [--runs-dir <path>]
+  npm run harness -- lossless validate --fixture <fixture-source.json>
+  npm run harness -- lossless freeze --fixture <fixture-source.json> --manifest <path> [--model gpt-5-mini]
+  npm run harness -- lossless instrument --fixture <fixture-source.json> --manifest <path> [--run-dir <path>]
+  npm run harness -- lossless form --fixture <fixture-source.json> --manifest <path> --run-dir <path>
+  npm run harness -- lossless treatment --fixture <fixture-source.json> --manifest <path> --run-dir <path> --claim-audit <path>
 
 Environment:
   CORTEX_HARNESS_AUTH_FILE  Override the external credential file
@@ -312,6 +346,12 @@ function positiveNumberOptionOrDefault(
   return value;
 }
 
+function requiredOption(args: readonly string[], name: string): string {
+  const value = option(args, name);
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
 function mabConditionOption(args: readonly string[]): MabCondition {
   const condition = option(args, "--condition") ?? "cortex";
   const matched = MAB_CONDITIONS.find((candidate) => candidate === condition);
@@ -329,6 +369,36 @@ function mabSourceOption(args: readonly string[]): MabSource {
     throw new Error(`unsupported MemoryAgentBench source: ${source}`);
   }
   return source;
+}
+
+function losslessModel(
+  requestedId: string,
+  context: GitHubCopilotModelContext,
+): LosslessModelSpec {
+  const rates = [context.model.cost, ...(context.model.cost.tiers ?? [])];
+  const costPerMillionTokens = {
+    input: Math.max(...rates.map((rate) => rate.input)),
+    output: Math.max(...rates.map((rate) => rate.output)),
+    cacheRead: Math.max(...rates.map((rate) => rate.cacheRead)),
+    cacheWrite: Math.max(...rates.map((rate) => rate.cacheWrite)),
+  };
+  return {
+    provider: PROVIDER,
+    requestedId,
+    resolvedId: context.model.id,
+    requestedThinkingLevel: "low",
+    effectiveThinkingLevel: clampThinkingLevel(context.model, "low"),
+    contextWindow: context.model.contextWindow,
+    maxOutputTokens: context.model.maxTokens,
+    costPerMillionTokens,
+    maximumInvocationCostUsd:
+      (context.model.contextWindow *
+        (costPerMillionTokens.input +
+          costPerMillionTokens.cacheRead +
+          costPerMillionTokens.cacheWrite) +
+        context.model.maxTokens * costPerMillionTokens.output) /
+      1_000_000,
+  };
 }
 
 function mabModel(
@@ -670,6 +740,274 @@ async function mabCommand(args: readonly string[]): Promise<void> {
   if (report.status !== "completed") process.exitCode = 1;
 }
 
+async function losslessExecutionContext(
+  manifestPath: string,
+  fixturePath: string,
+): Promise<{
+  fixture: Awaited<ReturnType<typeof loadFrozenLosslessFixture>>;
+  manifest: Awaited<ReturnType<typeof readLosslessRunManifest>>["manifest"];
+  manifestSha256: string;
+  modelContext: GitHubCopilotModelContext;
+  execution: {
+    model: LosslessModelSpec;
+    repository: { commit: string; dirty: boolean };
+    sourceFiles: Record<string, string>;
+  };
+  credentials: PrivateFileCredentialStore;
+}> {
+  const fixture = await loadFrozenLosslessFixture(fixturePath);
+  const { manifest, sha256: manifestSha256 } =
+    await readLosslessRunManifest(manifestPath);
+  const credentials = new PrivateFileCredentialStore();
+  const modelContext = await resolveGitHubCopilotModel(
+    credentials,
+    manifest.model.requestedId,
+  );
+  return {
+    fixture,
+    manifest,
+    manifestSha256,
+    modelContext,
+    execution: {
+      model: losslessModel(manifest.model.requestedId, modelContext),
+      repository: await requiredRepositoryState(EXECUTING_REPOSITORY_ROOT),
+      sourceFiles: await captureLosslessSourceFiles(
+        EXECUTING_REPOSITORY_ROOT,
+      ),
+    },
+    credentials,
+  };
+}
+
+function losslessRunner(
+  context: GitHubCopilotModelContext,
+  tracePath: string,
+): PiAgentRunner {
+  return new PiAgentRunner({
+    models: context.models,
+    model: context.model,
+    thinkingLevel: "low",
+    maxAttempts: LOSSLESS_ANSWER_MAX_ATTEMPTS,
+    maxTurns: LOSSLESS_ANSWER_MAX_TURNS,
+    timeoutMs: LOSSLESS_TIMEOUT_MS,
+    trace: new JsonlPiTraceSink(tracePath),
+  });
+}
+
+async function losslessCommand(args: readonly string[]): Promise<void> {
+  const action = args[0];
+  if (
+    !action ||
+    !["validate", "freeze", "instrument", "form", "treatment"].includes(
+      action,
+    )
+  ) {
+    throw new Error(
+      "usage: lossless validate|freeze|instrument|form|treatment [options]",
+    );
+  }
+  const fixturePath = resolve(requiredOption(args, "--fixture"));
+  if (action === "validate") {
+    const fixture = await loadFrozenLosslessFixture(fixturePath);
+    console.log(
+      `Validated ${fixture.source.streams.length} streams and ${fixture.source.streams.reduce((sum, stream) => sum + stream.tasks.length, 0)} tasks`,
+    );
+    console.log(`Fixture SHA-256: ${fixture.hashes.sourceSha256}`);
+    return;
+  }
+
+  const manifestPath = resolve(requiredOption(args, "--manifest"));
+  if (action === "freeze") {
+    const fixture = await loadFrozenLosslessFixture(fixturePath);
+    const modelId = option(args, "--model") ?? "gpt-5-mini";
+    const thinking = option(args, "--thinking") ?? "low";
+    if (thinking !== "low") {
+      throw new Error("the frozen lossless diagnostic requires --thinking low");
+    }
+    const credentials = new PrivateFileCredentialStore();
+    const modelContext = await resolveGitHubCopilotModel(credentials, modelId);
+    const repository = await requiredRepositoryState(
+      EXECUTING_REPOSITORY_ROOT,
+    );
+    const batchId = `lossless-${new Date()
+      .toISOString()
+      .replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
+    const manifest = await freezeLosslessRunManifest({
+      manifestPath,
+      batchId,
+      fixture,
+      model: losslessModel(modelId, modelContext),
+      repository,
+      sourceFiles: await captureLosslessSourceFiles(
+        EXECUTING_REPOSITORY_ROOT,
+      ),
+    });
+    console.log(
+      `Frozen manifest: ${relative(process.cwd(), manifestPath) || manifestPath}`,
+    );
+    console.log(
+      `${manifest.fixture.orderedStreamSha256.length} streams, ${manifest.fixture.orderedTaskSha256.length} tasks, $${manifest.protocol.costCapUsd.toFixed(2)} cap`,
+    );
+    return;
+  }
+
+  const runRoot =
+    option(args, "--run-dir") ??
+    (action === "instrument"
+      ? runDirectory(DEFAULT_LOSSLESS_RUNS_ROOT)
+      : undefined);
+  if (!runRoot) {
+    throw new Error(`${action} requires --run-dir <path>`);
+  }
+  const artifactDirectory = resolve(runRoot);
+
+  try {
+    const context = await losslessExecutionContext(manifestPath, fixturePath);
+    if (action === "instrument") {
+    const report = await runLosslessInstrument({
+      artifactDirectory,
+      fixture: context.fixture,
+      manifest: context.manifest,
+      manifestSha256: context.manifestSha256,
+      execution: context.execution,
+      createAnswerExecutor(executorContext) {
+        return new LosslessAnswerExecutor({
+          runner: losslessRunner(
+            context.modelContext,
+            join(executorContext.artifactDirectory, "agent-trace.jsonl"),
+          ),
+          model: context.manifest.model.resolvedId,
+          contextWindow: context.manifest.model.contextWindow,
+          maxOutputTokens: context.manifest.model.maxOutputTokens,
+          fixture: `lossless/${executorContext.streamId}/${executorContext.taskId}`,
+        });
+      },
+    });
+    console.log(
+      `Instrument: ${report.status}; oracle ${report.headroom.oracleCorrectByRepetition.join("/")}, raw ${report.headroom.rawCorrectByRepetition.join("/")}`,
+    );
+    console.log(
+      `Artifacts: ${relative(process.cwd(), artifactDirectory) || artifactDirectory}`,
+    );
+    if (report.status !== "ready_for_formation") {
+      const terminal = await finalizeTerminalInstrument({
+        artifactDirectory,
+        fixture: context.fixture,
+        manifest: context.manifest,
+        manifestSha256: context.manifestSha256,
+        instrumentReport: report,
+        instrumentReportSha256: sha256Text(canonicalJson(report)),
+      });
+      console.log(`Decision: ${terminal.decision}`);
+      process.exitCode = 1;
+    }
+    return;
+    }
+
+    const instrumentArtifact = await readLosslessInstrumentReport(
+      join(artifactDirectory, "instrument-report.json"),
+    );
+    if (action === "form") {
+    const report = await runLosslessFormationStage({
+      artifactDirectory,
+      fixture: context.fixture,
+      manifest: context.manifest,
+      manifestSha256: context.manifestSha256,
+      execution: context.execution,
+      instrumentReport: instrumentArtifact.report,
+      instrumentReportSha256: instrumentArtifact.sha256,
+      createFormationExecutor(executorContext) {
+        return new LosslessFormationExecutor({
+          runner: losslessRunner(
+            context.modelContext,
+            join(executorContext.artifactDirectory, "agent-trace.jsonl"),
+          ),
+          model: context.manifest.model.resolvedId,
+          contextWindow: context.manifest.model.contextWindow,
+          maxOutputTokens: context.manifest.model.maxOutputTokens,
+          fixture: `lossless/${executorContext.streamId}`,
+        });
+      },
+    });
+    console.log(
+      `Formation: ${report.status}; ${report.runs.filter((run) => run.status === "completed").length}/${report.runs.length} runs completed`,
+    );
+    console.log(
+      `Claim packet: ${relative(process.cwd(), join(artifactDirectory, "formed-claim-review-packet.md"))}`,
+    );
+    if (report.status !== "completed") process.exitCode = 1;
+    return;
+    }
+
+    const formationArtifact = await readLosslessFormationStageReport(
+      join(artifactDirectory, "formation-stage.json"),
+    );
+    const claimAuditPath = resolve(requiredOption(args, "--claim-audit"));
+    const claimAuditRaw = await readFile(claimAuditPath, "utf8").catch(
+      (error: unknown) =>
+        canonicalJson({
+          readError: error instanceof Error ? error.message : String(error),
+        }),
+    );
+    const report = await runLosslessTreatmentStage({
+      artifactDirectory,
+      fixture: context.fixture,
+      manifest: context.manifest,
+      manifestSha256: context.manifestSha256,
+      execution: context.execution,
+      instrumentReport: instrumentArtifact.report,
+      instrumentReportSha256: instrumentArtifact.sha256,
+      formationReport: formationArtifact.report,
+      formationReportSha256: formationArtifact.sha256,
+      claimAuditRaw,
+      createAnswerExecutor(executorContext) {
+        return new LosslessAnswerExecutor({
+          runner: losslessRunner(
+            context.modelContext,
+            join(executorContext.artifactDirectory, "agent-trace.jsonl"),
+          ),
+          model: context.manifest.model.resolvedId,
+          contextWindow: context.manifest.model.contextWindow,
+          maxOutputTokens: context.manifest.model.maxOutputTokens,
+          fixture: `lossless/${executorContext.streamId}/${executorContext.taskId}`,
+        });
+      },
+    });
+    console.log(`Decision: ${report.decision}`);
+    console.log(
+      `Artifacts: ${relative(process.cwd(), artifactDirectory) || artifactDirectory}`,
+    );
+    if (report.decision !== "formation_supported") process.exitCode = 1;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "EEXIST"
+    ) {
+      console.error("Error: lossless stage is already claimed");
+      process.exitCode = 1;
+      return;
+    }
+    await publishPrivateJsonWriteOnce(
+      join(artifactDirectory, "lossless-preflight-result.json"),
+      {
+        schemaVersion: 1,
+        stage: "preflight",
+        decision: "instrument_invalid",
+        error: {
+          name: error instanceof Error ? error.name : "Error",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      },
+    );
+    console.log("Decision: instrument_invalid");
+    console.log(
+      `Artifacts: ${relative(process.cwd(), artifactDirectory) || artifactDirectory}`,
+    );
+    process.exitCode = 1;
+  }
+}
+
 async function fixtureCommand(args: readonly string[]): Promise<void> {
   const action = args[0];
   if (action !== "run" && action !== "batch") {
@@ -807,6 +1145,7 @@ async function main(): Promise<void> {
   if (command === "models") return modelsCommand(args);
   if (command === "fixture") return fixtureCommand(args);
   if (command === "mab") return mabCommand(args);
+  if (command === "lossless") return losslessCommand(args);
   throw new Error(`unknown command: ${command}`);
 }
 
