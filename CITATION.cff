@@ -1,6 +1,6 @@
 cff-version: 1.2.0
-message: "If you use Cortex as a design or implementation reference, please cite this software."
-title: "Cortex: a cognition framework for long-running agents"
+message: "If you use Cortex as a design, implementation, or negative-results reference, please cite this software."
+title: "Cortex: an experimental cognition framework and evaluation record"
 type: software
 authors:
   - family-names: "Tan"
@@ -10,11 +10,15 @@ date-released: 2026-08-20
 repository-code: "https://github.com/renyitan/cortex"
 license: MIT
 abstract: >-
-  Cortex is a cognition plugin for long-running agents. It keeps canonical memory and work as
-  operator-owned Markdown, derives removable local projections for retrieval and observability,
-  and records explicit boundaries between host-enforced behavior and model-owned cognition.
+  Cortex is a completed experimental investigation of structured cognition and durable memory for
+  long-running agents. It includes an operator-owned Markdown reference implementation, local
+  retrieval and write-integrity mechanisms, a model-backed evaluation harness, and negative results
+  showing that the tested package did not establish better delayed-task accuracy than direct use of
+  the same evidence.
 keywords:
   - "agent memory"
   - "context management"
   - "cognition framework"
+  - "negative results"
+  - "LLM evaluation"
   - "GitHub Copilot CLI"

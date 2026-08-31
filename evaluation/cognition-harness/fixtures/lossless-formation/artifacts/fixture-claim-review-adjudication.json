@@ -1,0 +1,29 @@
+{
+  "adjudicationType": "claim-review",
+  "agreementCounts": {
+    "effectiveTimeAndEvidenceBinding": 144,
+    "entries": 144,
+    "exactScope": 144,
+    "fullPasses": 144,
+    "kind": 144,
+    "statementSupport": 144,
+    "subjectKey": 144,
+    "supersession": 144
+  },
+  "ambiguityCounts": {
+    "entries": 0
+  },
+  "fixtureContentSha256": "4ce13443e52f9594151d1a1ed96044955dd853b07048af9592564d9774e8b6b9",
+  "labels": {
+    "path": "artifacts/fixture-claim-review-labels.blind.json",
+    "sha256": "12162168a21d5f1140752de9ed501c33f9624ef542ee9f3bb00a23baea096cd0"
+  },
+  "packet": {
+    "path": "artifacts/fixture-claim-review-packet.md",
+    "sha256": "223c0f3cc9d6d974bbc6f60d15b6fab053cd75677d731da83667647be45d4543"
+  },
+  "reviewDate": "2026-08-31",
+  "reviewerLimitation": "Reviewed only the source packet; cross-entry uniqueness and chain consistency were not assessed because the packet assigns those checks to generator validation.",
+  "schemaVersion": 1,
+  "status": "passed"
+}

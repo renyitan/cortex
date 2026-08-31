@@ -43,6 +43,12 @@ jobs:
         working-directory: evaluation/cognition-harness
         run: npm run check
 
+      - name: Check frozen lossless fixture
+        working-directory: evaluation/cognition-harness/fixtures/lossless-formation
+        run: |
+          python3 code/build_fixture_artifacts.py --check
+          python3 code/test_build_fixture_artifacts.py
+
       - name: Check repository consistency
         run: scripts/cortex-lint
 

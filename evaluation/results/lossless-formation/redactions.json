@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "reason": "The original provider error contained a complete HTML response body. Public reports retain the error class and HTTP status but omit that provider-controlled body.",
+  "replacementMessage": "Pi agent failed after 1 attempts: OpenAI API error (502): provider response body omitted from public artifact",
+  "redactions": [
+    {
+      "artifact": "instrument-report.json",
+      "jsonPath": "cells[81].error.message",
+      "originalLength": 54952,
+      "originalSha256": "9af7d0068ecf9d76ea3d2baf6283c257576bd78936372bdeeab821b1daf31f1d"
+    },
+    {
+      "artifact": "terminal-report.json",
+      "jsonPath": "cells[81].error.message",
+      "originalLength": 54952,
+      "originalSha256": "9af7d0068ecf9d76ea3d2baf6283c257576bd78936372bdeeab821b1daf31f1d"
+    }
+  ]
+}

@@ -2,8 +2,8 @@
 
 ## Support status
 
-No Cortex version receives security fixes or compatibility updates, and response times are not
-guaranteed.
+Cortex is a completed, archived research project. No version receives security fixes or
+compatibility updates, and response times are not guaranteed.
 
 | Version | Supported |
 |---|---|

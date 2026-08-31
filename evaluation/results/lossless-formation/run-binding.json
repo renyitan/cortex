@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "resultType": "public-run-binding",
+  "decision": "instrument_invalid",
+  "model": {
+    "provider": "github-copilot",
+    "id": "gpt-5-mini",
+    "thinkingLevel": "low"
+  },
+  "originalRunManifestSha256": "09e3e00c3a8820f6c732dc57bf3568c7954e3149a10e962ecc1c814fad2564fb",
+  "originalInstrumentReportSha256": "b5510e1b609fa7a2a7481c899130254ee24705d4c4d41c10bc0117aeef09124c",
+  "publicInstrumentReportSha256": "b4ec4f3e4762abc7cd2cf76e4e452c38e7cded345bc04e5ef40bd73256ee4375",
+  "originalTerminalReportSha256": "2507c3f944b331b2e41b3737dc6905d76b6de8154fbe7df76211a8626d736345",
+  "publicTerminalReportSha256": "914dce4801314c877931e56edca456ac57db2e956f8082dda146ce7c65dfe311",
+  "originalDiagnosticCommit": "94965c0b186719d4c8903486dc83d3758bf116df",
+  "publicEquivalentCommit": "c695ad068ec9ce3658db0a21e8f4eb8ab6fda6b2",
+  "diagnosticTreeObjectId": "a7bb558b35942147141ad44ed64d0d87068fb874",
+  "manifestPublished": false,
+  "manifestPublicationBoundary": "The exact manifest contains a machine-local fixture path. Its hash is retained, while the equivalent evaluation code, exact synthetic fixture, sanitized cell report, and sanitized terminal report are public.",
+  "reportRedactionBoundary": "One provider-controlled HTML error body was replaced in both public reports. redactions.json retains its original hash and length."
+}

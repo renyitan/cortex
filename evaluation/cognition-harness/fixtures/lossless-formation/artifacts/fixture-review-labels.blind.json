@@ -1,0 +1,1330 @@
+{
+  "entries": [
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "solstice-note",
+        "solstice-pin",
+        "solstice-ping",
+        "solstice-hold",
+        "solstice-digest"
+      ],
+      "requiredActionIds": [],
+      "reviewId": "RV-001"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "juniper-cards",
+        "juniper-note",
+        "juniper-outline",
+        "juniper-defer"
+      ],
+      "requiredActionIds": [
+        "juniper-table"
+      ],
+      "reviewId": "RV-002"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "juniper-cards",
+        "juniper-table",
+        "juniper-note",
+        "juniper-defer"
+      ],
+      "requiredActionIds": [
+        "juniper-outline"
+      ],
+      "reviewId": "RV-003"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "harbor-forward",
+        "harbor-file",
+        "harbor-note",
+        "harbor-close"
+      ],
+      "requiredActionIds": [
+        "harbor-tag"
+      ],
+      "reviewId": "RV-004"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "mosaic-brief",
+        "mosaic-archive",
+        "mosaic-pin",
+        "mosaic-feed"
+      ],
+      "requiredActionIds": [
+        "mosaic-board"
+      ],
+      "reviewId": "RV-005"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "marigold-mono",
+        "marigold-slate",
+        "marigold-hold",
+        "marigold-indigo"
+      ],
+      "requiredActionIds": [
+        "marigold-coral"
+      ],
+      "reviewId": "RV-006"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "willow-check",
+        "willow-hold",
+        "willow-sign",
+        "willow-note",
+        "willow-file"
+      ],
+      "requiredActionIds": [],
+      "reviewId": "RV-007"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "cedar-unlock",
+        "cedar-copy",
+        "cedar-defer",
+        "cedar-notify"
+      ],
+      "requiredActionIds": [
+        "cedar-log"
+      ],
+      "reviewId": "RV-008"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "mosaic-brief",
+        "mosaic-board",
+        "mosaic-archive",
+        "mosaic-feed"
+      ],
+      "requiredActionIds": [
+        "mosaic-pin"
+      ],
+      "reviewId": "RV-009"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "comet-note",
+        "comet-form",
+        "comet-close",
+        "comet-page"
+      ],
+      "requiredActionIds": [
+        "comet-queue"
+      ],
+      "reviewId": "RV-010"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "mosaic-brief",
+        "mosaic-board",
+        "mosaic-archive",
+        "mosaic-pin"
+      ],
+      "requiredActionIds": [
+        "mosaic-feed"
+      ],
+      "reviewId": "RV-011"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "tern-note",
+        "tern-send",
+        "tern-pin",
+        "tern-hold"
+      ],
+      "requiredActionIds": [
+        "tern-file"
+      ],
+      "reviewId": "RV-012"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "comet-note",
+        "comet-close",
+        "comet-queue",
+        "comet-page"
+      ],
+      "requiredActionIds": [
+        "comet-form"
+      ],
+      "reviewId": "RV-013"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "marigold-mono",
+        "marigold-slate",
+        "marigold-hold",
+        "marigold-indigo"
+      ],
+      "requiredActionIds": [
+        "marigold-coral"
+      ],
+      "reviewId": "RV-014"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "lantern-relay",
+        "lantern-digest",
+        "lantern-log",
+        "lantern-hold"
+      ],
+      "requiredActionIds": [
+        "lantern-bulletin"
+      ],
+      "reviewId": "RV-015"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "comet-note",
+        "comet-form",
+        "comet-close",
+        "comet-queue"
+      ],
+      "requiredActionIds": [
+        "comet-page"
+      ],
+      "reviewId": "RV-016"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "harbor-forward",
+        "harbor-file",
+        "harbor-tag",
+        "harbor-note"
+      ],
+      "requiredActionIds": [
+        "harbor-close"
+      ],
+      "reviewId": "RV-017"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "marigold-coral",
+        "marigold-slate",
+        "marigold-hold",
+        "marigold-indigo"
+      ],
+      "requiredActionIds": [
+        "marigold-mono"
+      ],
+      "reviewId": "RV-018"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "willow-check",
+        "willow-sign",
+        "willow-note",
+        "willow-file"
+      ],
+      "requiredActionIds": [
+        "willow-hold"
+      ],
+      "reviewId": "RV-019"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "northstar-verify",
+        "northstar-flag",
+        "northstar-note",
+        "northstar-return"
+      ],
+      "requiredActionIds": [
+        "northstar-file"
+      ],
+      "reviewId": "RV-020"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "cedar-log",
+        "cedar-unlock",
+        "cedar-copy",
+        "cedar-notify"
+      ],
+      "requiredActionIds": [
+        "cedar-defer"
+      ],
+      "reviewId": "RV-021"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "willow-check",
+        "willow-sign",
+        "willow-note",
+        "willow-file"
+      ],
+      "requiredActionIds": [
+        "willow-hold"
+      ],
+      "reviewId": "RV-022"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "lantern-relay",
+        "lantern-bulletin",
+        "lantern-log",
+        "lantern-hold"
+      ],
+      "requiredActionIds": [
+        "lantern-digest"
+      ],
+      "reviewId": "RV-023"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "comet-note",
+        "comet-form",
+        "comet-close",
+        "comet-page"
+      ],
+      "requiredActionIds": [
+        "comet-queue"
+      ],
+      "reviewId": "RV-024"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "solstice-note",
+        "solstice-ping",
+        "solstice-hold",
+        "solstice-digest"
+      ],
+      "requiredActionIds": [
+        "solstice-pin"
+      ],
+      "reviewId": "RV-025"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "harbor-forward",
+        "harbor-file",
+        "harbor-tag",
+        "harbor-note",
+        "harbor-close"
+      ],
+      "requiredActionIds": [],
+      "reviewId": "RV-026"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "marigold-coral",
+        "marigold-slate",
+        "marigold-hold",
+        "marigold-indigo"
+      ],
+      "requiredActionIds": [
+        "marigold-mono"
+      ],
+      "reviewId": "RV-027"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "juniper-table",
+        "juniper-note",
+        "juniper-outline",
+        "juniper-defer"
+      ],
+      "requiredActionIds": [
+        "juniper-cards"
+      ],
+      "reviewId": "RV-028"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "solstice-note",
+        "solstice-ping",
+        "solstice-hold",
+        "solstice-digest"
+      ],
+      "requiredActionIds": [
+        "solstice-pin"
+      ],
+      "reviewId": "RV-029"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "northstar-file",
+        "northstar-verify",
+        "northstar-flag",
+        "northstar-return"
+      ],
+      "requiredActionIds": [
+        "northstar-note"
+      ],
+      "reviewId": "RV-030"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "tern-note",
+        "tern-send",
+        "tern-file",
+        "tern-pin",
+        "tern-hold"
+      ],
+      "requiredActionIds": [],
+      "reviewId": "RV-031"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "lantern-relay",
+        "lantern-digest",
+        "lantern-log",
+        "lantern-hold"
+      ],
+      "requiredActionIds": [
+        "lantern-bulletin"
+      ],
+      "reviewId": "RV-032"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "solstice-note",
+        "solstice-pin",
+        "solstice-ping",
+        "solstice-hold"
+      ],
+      "requiredActionIds": [
+        "solstice-digest"
+      ],
+      "reviewId": "RV-033"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "comet-note",
+        "comet-form",
+        "comet-close",
+        "comet-queue"
+      ],
+      "requiredActionIds": [
+        "comet-page"
+      ],
+      "reviewId": "RV-034"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "cedar-log",
+        "cedar-unlock",
+        "cedar-copy",
+        "cedar-defer",
+        "cedar-notify"
+      ],
+      "requiredActionIds": [],
+      "reviewId": "RV-035"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "tern-send",
+        "tern-file",
+        "tern-pin",
+        "tern-hold"
+      ],
+      "requiredActionIds": [
+        "tern-note"
+      ],
+      "reviewId": "RV-036"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "mosaic-brief",
+        "mosaic-board",
+        "mosaic-archive",
+        "mosaic-pin"
+      ],
+      "requiredActionIds": [
+        "mosaic-feed"
+      ],
+      "reviewId": "RV-037"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "marigold-coral",
+        "marigold-mono",
+        "marigold-slate",
+        "marigold-hold"
+      ],
+      "requiredActionIds": [
+        "marigold-indigo"
+      ],
+      "reviewId": "RV-038"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "willow-check",
+        "willow-hold",
+        "willow-sign",
+        "willow-note"
+      ],
+      "requiredActionIds": [
+        "willow-file"
+      ],
+      "reviewId": "RV-039"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "tern-note",
+        "tern-send",
+        "tern-pin",
+        "tern-hold"
+      ],
+      "requiredActionIds": [
+        "tern-file"
+      ],
+      "reviewId": "RV-040"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "seabird-transfer",
+        "seabird-pack",
+        "seabird-hold",
+        "seabird-note"
+      ],
+      "requiredActionIds": [
+        "seabird-index"
+      ],
+      "reviewId": "RV-041"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "mosaic-brief",
+        "mosaic-board",
+        "mosaic-archive",
+        "mosaic-feed"
+      ],
+      "requiredActionIds": [
+        "mosaic-pin"
+      ],
+      "reviewId": "RV-042"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "seabird-transfer",
+        "seabird-pack",
+        "seabird-hold",
+        "seabird-note"
+      ],
+      "requiredActionIds": [
+        "seabird-index"
+      ],
+      "reviewId": "RV-043"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "northstar-verify",
+        "northstar-flag",
+        "northstar-note",
+        "northstar-return"
+      ],
+      "requiredActionIds": [
+        "northstar-file"
+      ],
+      "reviewId": "RV-044"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "solstice-note",
+        "solstice-pin",
+        "solstice-ping",
+        "solstice-hold",
+        "solstice-digest"
+      ],
+      "requiredActionIds": [],
+      "reviewId": "RV-045"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "juniper-cards",
+        "juniper-note",
+        "juniper-outline",
+        "juniper-defer"
+      ],
+      "requiredActionIds": [
+        "juniper-table"
+      ],
+      "reviewId": "RV-046"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "lantern-relay",
+        "lantern-bulletin",
+        "lantern-log",
+        "lantern-hold"
+      ],
+      "requiredActionIds": [
+        "lantern-digest"
+      ],
+      "reviewId": "RV-047"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "northstar-file",
+        "northstar-verify",
+        "northstar-flag",
+        "northstar-note",
+        "northstar-return"
+      ],
+      "requiredActionIds": [],
+      "reviewId": "RV-048"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "harbor-forward",
+        "harbor-file",
+        "harbor-tag",
+        "harbor-note"
+      ],
+      "requiredActionIds": [
+        "harbor-close"
+      ],
+      "reviewId": "RV-049"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "lantern-relay",
+        "lantern-bulletin",
+        "lantern-digest",
+        "lantern-log"
+      ],
+      "requiredActionIds": [
+        "lantern-hold"
+      ],
+      "reviewId": "RV-050"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "willow-check",
+        "willow-hold",
+        "willow-sign",
+        "willow-note",
+        "willow-file"
+      ],
+      "requiredActionIds": [],
+      "reviewId": "RV-051"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "lantern-relay",
+        "lantern-bulletin",
+        "lantern-digest",
+        "lantern-log"
+      ],
+      "requiredActionIds": [
+        "lantern-hold"
+      ],
+      "reviewId": "RV-052"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "comet-note",
+        "comet-close",
+        "comet-queue",
+        "comet-page"
+      ],
+      "requiredActionIds": [
+        "comet-form"
+      ],
+      "reviewId": "RV-053"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "harbor-forward",
+        "harbor-file",
+        "harbor-note",
+        "harbor-close"
+      ],
+      "requiredActionIds": [
+        "harbor-tag"
+      ],
+      "reviewId": "RV-054"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "seabird-transfer",
+        "seabird-index",
+        "seabird-hold",
+        "seabird-note"
+      ],
+      "requiredActionIds": [
+        "seabird-pack"
+      ],
+      "reviewId": "RV-055"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "northstar-file",
+        "northstar-verify",
+        "northstar-flag",
+        "northstar-return"
+      ],
+      "requiredActionIds": [
+        "northstar-note"
+      ],
+      "reviewId": "RV-056"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "solstice-note",
+        "solstice-pin",
+        "solstice-ping",
+        "solstice-hold"
+      ],
+      "requiredActionIds": [
+        "solstice-digest"
+      ],
+      "reviewId": "RV-057"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "seabird-transfer",
+        "seabird-index",
+        "seabird-hold",
+        "seabird-note"
+      ],
+      "requiredActionIds": [
+        "seabird-pack"
+      ],
+      "reviewId": "RV-058"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "juniper-table",
+        "juniper-note",
+        "juniper-outline",
+        "juniper-defer"
+      ],
+      "requiredActionIds": [
+        "juniper-cards"
+      ],
+      "reviewId": "RV-059"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "tern-send",
+        "tern-file",
+        "tern-pin",
+        "tern-hold"
+      ],
+      "requiredActionIds": [
+        "tern-note"
+      ],
+      "reviewId": "RV-060"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "juniper-cards",
+        "juniper-table",
+        "juniper-note",
+        "juniper-defer"
+      ],
+      "requiredActionIds": [
+        "juniper-outline"
+      ],
+      "reviewId": "RV-061"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "seabird-transfer",
+        "seabird-pack",
+        "seabird-index",
+        "seabird-hold"
+      ],
+      "requiredActionIds": [
+        "seabird-note"
+      ],
+      "reviewId": "RV-062"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "cedar-log",
+        "cedar-unlock",
+        "cedar-copy",
+        "cedar-defer",
+        "cedar-notify"
+      ],
+      "requiredActionIds": [],
+      "reviewId": "RV-063"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "willow-check",
+        "willow-hold",
+        "willow-sign",
+        "willow-note"
+      ],
+      "requiredActionIds": [
+        "willow-file"
+      ],
+      "reviewId": "RV-064"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "northstar-file",
+        "northstar-verify",
+        "northstar-flag",
+        "northstar-note",
+        "northstar-return"
+      ],
+      "requiredActionIds": [],
+      "reviewId": "RV-065"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "cedar-unlock",
+        "cedar-copy",
+        "cedar-defer",
+        "cedar-notify"
+      ],
+      "requiredActionIds": [
+        "cedar-log"
+      ],
+      "reviewId": "RV-066"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "tern-note",
+        "tern-send",
+        "tern-file",
+        "tern-pin",
+        "tern-hold"
+      ],
+      "requiredActionIds": [],
+      "reviewId": "RV-067"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "marigold-coral",
+        "marigold-mono",
+        "marigold-slate",
+        "marigold-hold"
+      ],
+      "requiredActionIds": [
+        "marigold-indigo"
+      ],
+      "reviewId": "RV-068"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "mosaic-brief",
+        "mosaic-archive",
+        "mosaic-pin",
+        "mosaic-feed"
+      ],
+      "requiredActionIds": [
+        "mosaic-board"
+      ],
+      "reviewId": "RV-069"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "seabird-transfer",
+        "seabird-pack",
+        "seabird-index",
+        "seabird-hold"
+      ],
+      "requiredActionIds": [
+        "seabird-note"
+      ],
+      "reviewId": "RV-070"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "cedar-log",
+        "cedar-unlock",
+        "cedar-copy",
+        "cedar-notify"
+      ],
+      "requiredActionIds": [
+        "cedar-defer"
+      ],
+      "reviewId": "RV-071"
+    },
+    {
+      "ambiguityNotes": "",
+      "ambiguous": false,
+      "prohibitedActionIds": [
+        "harbor-forward",
+        "harbor-file",
+        "harbor-tag",
+        "harbor-note",
+        "harbor-close"
+      ],
+      "requiredActionIds": [],
+      "reviewId": "RV-072"
+    }
+  ],
+  "limitations": "Labels were produced from the review packet alone, following its Reader protocol, with Phase 1 completed before the Phase 2 pair map was opened; no fixture source, manifest, tests, mappings, prior labels, or gold data were consulted. Each entry partitions all five catalog actions: the action that governing guidance requires for the target subject at queryAt is listed as required, and every other action is listed as prohibited under the rule against calling unrelated catalog actions, so entries whose governing guidance is an explicit no-action rule prohibit all five. Guidance whose scope key is absent from scopePath was treated as inapplicable, and guidance about a different subject was treated as coexisting rather than conflicting. Pair equivalence judges only whether two entries yield the same required and prohibited partition, not whether their supporting evidence is presented identically.",
+  "pairs": [
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-005",
+        "RV-069"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-001"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-014",
+        "RV-006"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-002"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-024",
+        "RV-010"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-003"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-037",
+        "RV-011"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-004"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-058",
+        "RV-055"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-005"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-012",
+        "RV-040"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-006"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-019",
+        "RV-022"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-007"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-016",
+        "RV-034"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-008"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-071",
+        "RV-021"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-009"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-008",
+        "RV-066"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-010"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-057",
+        "RV-033"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-011"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-053",
+        "RV-013"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-012"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-018",
+        "RV-027"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-013"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-023",
+        "RV-047"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-014"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-042",
+        "RV-009"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-015"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-054",
+        "RV-004"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-016"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-063",
+        "RV-035"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-017"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-059",
+        "RV-028"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-018"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-050",
+        "RV-052"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-019"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-015",
+        "RV-032"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-020"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-039",
+        "RV-064"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-021"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-002",
+        "RV-046"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-022"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-001",
+        "RV-045"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-023"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-048",
+        "RV-065"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-024"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-067",
+        "RV-031"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-025"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-062",
+        "RV-070"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-026"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-041",
+        "RV-043"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-027"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-056",
+        "RV-030"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-028"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-051",
+        "RV-007"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-029"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-060",
+        "RV-036"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-030"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-003",
+        "RV-061"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-031"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-068",
+        "RV-038"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-032"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-017",
+        "RV-049"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-033"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-072",
+        "RV-026"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-034"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-044",
+        "RV-020"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-035"
+    },
+    {
+      "behaviorEquivalent": true,
+      "entryIds": [
+        "RV-029",
+        "RV-025"
+      ],
+      "equivalenceNotes": "",
+      "pairId": "RP-036"
+    }
+  ],
+  "reviewType": "independent-blind",
+  "sourcePacket": "workspace/agent-memory-research/cortex-lossless-memory-formation/artifacts/fixture-review-packet.md",
+  "sourcePacketSha256": "54a29bb8200b7ca9067571fb527095822851c0871127c5ebd52755dc27f7c49f"
+}

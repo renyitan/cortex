@@ -1,9 +1,9 @@
 # Findings and limitations
 
-This page records the evidence boundary for active Cortex development. Unless a later dated
-section says otherwise, implementation conclusions below apply to the reviewed `v0.33.0` plugin
-baseline. It distinguishes properties exercised by checked-in tests from broader claims the
-project has not established.
+This page records the evidence boundary for the completed Cortex investigation. Development was
+parked on 2026-08-31 after the tested package failed to establish a behavioral advantage over
+direct evidence use. Unless a later dated section says otherwise, implementation conclusions apply
+to the reviewed `v0.33.0` plugin baseline.
 
 ![Evidence boundary from deterministic tests and inspectable local mechanism evidence to the unestablished questions of model delivery, model use, and behavioral improvement](diagrams/evidence-boundary.png)
 
@@ -55,6 +55,48 @@ production reliability, or cross-model generalization. Within those boundaries, 
 that the Pi controller enforced the procedure, but the evaluated formation-and-use treatment did
 not establish better delayed-task outcomes than both controls.
 
+## Formation-use causal ablation (2026-08-28)
+
+A frozen 2x2 diagnostic separated the tested semantic-formation path from the combined enforced-use
+path on the two multi-hop streams where the repeated pilot lost ground.
+
+| Formation | Use | Correct |
+|---|---|---:|
+| Exact raw evidence | Direct | 48/60 |
+| Current semantic memory | Direct | 0/60 |
+| Exact raw evidence | Enforced Cortex path | 29/60 |
+| Current semantic memory | Enforced Cortex path | 0/60 |
+
+All 240 answer evaluations completed without execution errors, and paired store hashes confirmed
+that the direct and enforced raw arms received byte-identical memory. The semantic stores retained
+the expected number of records but discarded the dense facts needed by the tasks. The raw-store
+comparison separately showed that the combined enforced-use path lost useful information or
+reasoning capacity relative to direct reading.
+
+This result identifies two deficits in the tested package. It does not prove that all semantic
+memory is harmful or isolate one individual lifecycle phase. See the
+[complete ablation report](../evaluation/results/formation-use-ablation/README.md).
+
+## Lossless-formation instrument (2026-08-31)
+
+The final investigation preserved every exact observation and added evaluator-authored claims with
+kind, subject, scope, time, evidence, and supersession. It first tested whether those perfect
+structured claims gave the direct reader a reliable ceiling before allowing model formation.
+
+| Condition | Correct | Accuracy |
+|---|---:|---:|
+| Raw direct | 44/108 | 40.7% |
+| Oracle enriched direct | 69/108 | 63.9% |
+
+The 23.1-point oracle gain was descriptive evidence that organization helped this reader. The
+instrument was still invalid because oracle accuracy reached only 22/36, 25/36, and 22/36 across
+the three repetitions, below the frozen minimum of 35/36 each time. Model formation and treatment
+were correctly blocked.
+
+This is not evidence that lossless formation fails. It shows that the frozen reader could not
+reliably evaluate it. See the
+[complete instrument report](../evaluation/results/lossless-formation/README.md).
+
 ## Not established
 
 The reviewed `v0.33.0` baseline does not provide public evidence that:
@@ -70,16 +112,20 @@ The reviewed `v0.33.0` baseline does not provide public evidence that:
 The distinction matters because an index hit, hook event, or loaded skill is only mechanism
 evidence. None is a behavioral outcome by itself.
 
-## Practical conclusion
+## Product conclusion
 
-Cortex is best read as a design and implementation study in operator-owned agent cognition. Its
-strongest contribution is not a claim of autonomous self-improvement. It is the explicit separation
-between:
+Cortex is best read as a completed design and implementation study in operator-owned agent
+cognition. The tested product direction did not earn continued development: direct evidence use was
+more accurate, cheaper, and simpler in the strongest valid comparison.
+
+Its useful contributions are the explicit separation between:
 
 - canonical state and removable projections;
 - semantic phases and host callbacks;
 - mechanism evidence and behavioral evidence;
 - automatic writes and operator approval.
 
-Those boundaries remain useful reference points. Proving the behavioral loop would require a
-separate controlled research program rather than inference from the plugin's mechanisms.
+Those boundaries remain useful reference points. Cortex should not be reopened merely to add more
+phases, prompts, or memory schemas. Reopening would require prior independent evidence that a
+selective context method can match or beat direct full-context use when the complete evidence
+cannot fit.

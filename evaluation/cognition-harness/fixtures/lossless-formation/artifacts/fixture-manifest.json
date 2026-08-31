@@ -1,0 +1,2041 @@
+{
+  "balance": {
+    "chainActionPositionPatterns": {
+      "action-substitution": [
+        {
+          "positions": [
+            2,
+            5,
+            3
+          ],
+          "streamId": "stream-01"
+        },
+        {
+          "positions": [
+            4,
+            2,
+            5
+          ],
+          "streamId": "stream-03"
+        },
+        {
+          "positions": [
+            5,
+            2,
+            4
+          ],
+          "streamId": "stream-05"
+        },
+        {
+          "positions": [
+            3,
+            5,
+            2
+          ],
+          "streamId": "stream-07"
+        },
+        {
+          "positions": [
+            1,
+            4,
+            2
+          ],
+          "streamId": "stream-09"
+        },
+        {
+          "positions": [
+            2,
+            5,
+            1
+          ],
+          "streamId": "stream-11"
+        }
+      ],
+      "require-prohibit-reversal": [
+        {
+          "positions": [
+            3,
+            5
+          ],
+          "streamId": "stream-02"
+        },
+        {
+          "positions": [
+            1,
+            4
+          ],
+          "streamId": "stream-04"
+        },
+        {
+          "positions": [
+            4,
+            1
+          ],
+          "streamId": "stream-06"
+        },
+        {
+          "positions": [
+            2,
+            5
+          ],
+          "streamId": "stream-08"
+        },
+        {
+          "positions": [
+            5,
+            2
+          ],
+          "streamId": "stream-10"
+        },
+        {
+          "positions": [
+            1,
+            3
+          ],
+          "streamId": "stream-12"
+        }
+      ]
+    },
+    "mechanisms": {
+      "action-substitution": 6,
+      "require-prohibit-reversal": 6
+    },
+    "mechanismsByMemoryType": {
+      "decision": {
+        "action-substitution": 2,
+        "require-prohibit-reversal": 2
+      },
+      "preference": {
+        "action-substitution": 2,
+        "require-prohibit-reversal": 2
+      },
+      "procedure": {
+        "action-substitution": 2,
+        "require-prohibit-reversal": 2
+      }
+    },
+    "memoryTypes": {
+      "decision": 4,
+      "preference": 4,
+      "procedure": 4
+    },
+    "positionPatternsByMemoryType": {
+      "decision": {
+        "pattern-1": 1,
+        "pattern-2": 1,
+        "pattern-3": 1,
+        "pattern-4": 1
+      },
+      "preference": {
+        "pattern-1": 1,
+        "pattern-2": 1,
+        "pattern-3": 1,
+        "pattern-4": 1
+      },
+      "procedure": {
+        "pattern-1": 1,
+        "pattern-2": 1,
+        "pattern-3": 1,
+        "pattern-4": 1
+      }
+    },
+    "queryTypes": {
+      "adjacent_scope": 12,
+      "current_in_scope": 12,
+      "historical_as_of": 12
+    },
+    "targetScopeLevels": {
+      "organization": 9,
+      "project": 12,
+      "team": 9,
+      "workflow": 6
+    }
+  },
+  "behaviorPairShuffleSeed": 1580546720,
+  "checkCommand": "python3 code/build_fixture_artifacts.py --check",
+  "claimReviewShuffleSeed": 2002951714,
+  "counts": {
+    "claimReviewEntries": 144,
+    "claims": 144,
+    "observations": 144,
+    "reviewEntries": 72,
+    "reviewPairs": 36,
+    "streams": 12,
+    "tasks": 36
+  },
+  "fixtureContentSha256": "4ce13443e52f9594151d1a1ed96044955dd853b07048af9592564d9774e8b6b9",
+  "generatedFrom": "artifacts/fixture-source.json",
+  "generationCommand": "python3 code/build_fixture_artifacts.py",
+  "generator": "code/build_fixture_artifacts.py",
+  "hashes": {
+    "behaviorAdjudicationSha256": "ddd04c1e6e53f95a3ad64fcfa917086b5369e0fbebe8093986c7a8cf2ed3b394",
+    "behaviorLabelSha256": "835e06a7e39d7fec33279eafd82698bb9f237ac5c761527a876e3b59bd67284b",
+    "claimAdjudicationSha256": "c725061f1fddcb2e2d9fa98519e5891b5f51b7477cb9bf88613b6751d0b7fa43",
+    "claimLabelSha256": "12162168a21d5f1140752de9ed501c33f9624ef542ee9f3bb00a23baea096cd0",
+    "claimReviewPacketSha256": "223c0f3cc9d6d974bbc6f60d15b6fab053cd75677d731da83667647be45d4543",
+    "fixtureContentSha256": "4ce13443e52f9594151d1a1ed96044955dd853b07048af9592564d9774e8b6b9",
+    "reviewPacketSha256": "54a29bb8200b7ca9067571fb527095822851c0871127c5ebd52755dc27f7c49f",
+    "sourceSha256": "15b349136bdc9f5eca6a8b2560cb64de9e726a9ef0760fd0c0a3606946924a87"
+  },
+  "limitations": [
+    "Fixture kind cues are intentionally explicit to make kind fidelity independently auditable; this development instrument does not measure difficult latent kind classification.",
+    "Oracle claims add only structure and copy their bound observation wording exactly; oracle gains cannot come from evaluator paraphrase or summarization."
+  ],
+  "neutralBehaviorPairMapping": {
+    "RP-001": {
+      "queryType": "historical_as_of",
+      "reviewIds": [
+        "RV-005",
+        "RV-069"
+      ],
+      "streamId": "stream-03",
+      "taskId": "stream-03-task-03"
+    },
+    "RP-002": {
+      "queryType": "current_in_scope",
+      "reviewIds": [
+        "RV-014",
+        "RV-006"
+      ],
+      "streamId": "stream-11",
+      "taskId": "stream-11-task-01"
+    },
+    "RP-003": {
+      "queryType": "current_in_scope",
+      "reviewIds": [
+        "RV-024",
+        "RV-010"
+      ],
+      "streamId": "stream-05",
+      "taskId": "stream-05-task-01"
+    },
+    "RP-004": {
+      "queryType": "current_in_scope",
+      "reviewIds": [
+        "RV-037",
+        "RV-011"
+      ],
+      "streamId": "stream-03",
+      "taskId": "stream-03-task-01"
+    },
+    "RP-005": {
+      "queryType": "current_in_scope",
+      "reviewIds": [
+        "RV-058",
+        "RV-055"
+      ],
+      "streamId": "stream-07",
+      "taskId": "stream-07-task-01"
+    },
+    "RP-006": {
+      "queryType": "current_in_scope",
+      "reviewIds": [
+        "RV-012",
+        "RV-040"
+      ],
+      "streamId": "stream-12",
+      "taskId": "stream-12-task-01"
+    },
+    "RP-007": {
+      "queryType": "adjacent_scope",
+      "reviewIds": [
+        "RV-019",
+        "RV-022"
+      ],
+      "streamId": "stream-08",
+      "taskId": "stream-08-task-02"
+    },
+    "RP-008": {
+      "queryType": "adjacent_scope",
+      "reviewIds": [
+        "RV-016",
+        "RV-034"
+      ],
+      "streamId": "stream-05",
+      "taskId": "stream-05-task-02"
+    },
+    "RP-009": {
+      "queryType": "current_in_scope",
+      "reviewIds": [
+        "RV-071",
+        "RV-021"
+      ],
+      "streamId": "stream-04",
+      "taskId": "stream-04-task-01"
+    },
+    "RP-010": {
+      "queryType": "adjacent_scope",
+      "reviewIds": [
+        "RV-008",
+        "RV-066"
+      ],
+      "streamId": "stream-04",
+      "taskId": "stream-04-task-02"
+    },
+    "RP-011": {
+      "queryType": "adjacent_scope",
+      "reviewIds": [
+        "RV-057",
+        "RV-033"
+      ],
+      "streamId": "stream-10",
+      "taskId": "stream-10-task-02"
+    },
+    "RP-012": {
+      "queryType": "historical_as_of",
+      "reviewIds": [
+        "RV-053",
+        "RV-013"
+      ],
+      "streamId": "stream-05",
+      "taskId": "stream-05-task-03"
+    },
+    "RP-013": {
+      "queryType": "adjacent_scope",
+      "reviewIds": [
+        "RV-018",
+        "RV-027"
+      ],
+      "streamId": "stream-11",
+      "taskId": "stream-11-task-02"
+    },
+    "RP-014": {
+      "queryType": "current_in_scope",
+      "reviewIds": [
+        "RV-023",
+        "RV-047"
+      ],
+      "streamId": "stream-01",
+      "taskId": "stream-01-task-01"
+    },
+    "RP-015": {
+      "queryType": "adjacent_scope",
+      "reviewIds": [
+        "RV-042",
+        "RV-009"
+      ],
+      "streamId": "stream-03",
+      "taskId": "stream-03-task-02"
+    },
+    "RP-016": {
+      "queryType": "adjacent_scope",
+      "reviewIds": [
+        "RV-054",
+        "RV-004"
+      ],
+      "streamId": "stream-02",
+      "taskId": "stream-02-task-02"
+    },
+    "RP-017": {
+      "queryType": "historical_as_of",
+      "reviewIds": [
+        "RV-063",
+        "RV-035"
+      ],
+      "streamId": "stream-04",
+      "taskId": "stream-04-task-03"
+    },
+    "RP-018": {
+      "queryType": "adjacent_scope",
+      "reviewIds": [
+        "RV-059",
+        "RV-028"
+      ],
+      "streamId": "stream-09",
+      "taskId": "stream-09-task-02"
+    },
+    "RP-019": {
+      "queryType": "historical_as_of",
+      "reviewIds": [
+        "RV-050",
+        "RV-052"
+      ],
+      "streamId": "stream-01",
+      "taskId": "stream-01-task-03"
+    },
+    "RP-020": {
+      "queryType": "adjacent_scope",
+      "reviewIds": [
+        "RV-015",
+        "RV-032"
+      ],
+      "streamId": "stream-01",
+      "taskId": "stream-01-task-02"
+    },
+    "RP-021": {
+      "queryType": "current_in_scope",
+      "reviewIds": [
+        "RV-039",
+        "RV-064"
+      ],
+      "streamId": "stream-08",
+      "taskId": "stream-08-task-01"
+    },
+    "RP-022": {
+      "queryType": "current_in_scope",
+      "reviewIds": [
+        "RV-002",
+        "RV-046"
+      ],
+      "streamId": "stream-09",
+      "taskId": "stream-09-task-01"
+    },
+    "RP-023": {
+      "queryType": "historical_as_of",
+      "reviewIds": [
+        "RV-001",
+        "RV-045"
+      ],
+      "streamId": "stream-10",
+      "taskId": "stream-10-task-03"
+    },
+    "RP-024": {
+      "queryType": "historical_as_of",
+      "reviewIds": [
+        "RV-048",
+        "RV-065"
+      ],
+      "streamId": "stream-06",
+      "taskId": "stream-06-task-03"
+    },
+    "RP-025": {
+      "queryType": "historical_as_of",
+      "reviewIds": [
+        "RV-067",
+        "RV-031"
+      ],
+      "streamId": "stream-12",
+      "taskId": "stream-12-task-03"
+    },
+    "RP-026": {
+      "queryType": "historical_as_of",
+      "reviewIds": [
+        "RV-062",
+        "RV-070"
+      ],
+      "streamId": "stream-07",
+      "taskId": "stream-07-task-03"
+    },
+    "RP-027": {
+      "queryType": "adjacent_scope",
+      "reviewIds": [
+        "RV-041",
+        "RV-043"
+      ],
+      "streamId": "stream-07",
+      "taskId": "stream-07-task-02"
+    },
+    "RP-028": {
+      "queryType": "adjacent_scope",
+      "reviewIds": [
+        "RV-056",
+        "RV-030"
+      ],
+      "streamId": "stream-06",
+      "taskId": "stream-06-task-02"
+    },
+    "RP-029": {
+      "queryType": "historical_as_of",
+      "reviewIds": [
+        "RV-051",
+        "RV-007"
+      ],
+      "streamId": "stream-08",
+      "taskId": "stream-08-task-03"
+    },
+    "RP-030": {
+      "queryType": "adjacent_scope",
+      "reviewIds": [
+        "RV-060",
+        "RV-036"
+      ],
+      "streamId": "stream-12",
+      "taskId": "stream-12-task-02"
+    },
+    "RP-031": {
+      "queryType": "historical_as_of",
+      "reviewIds": [
+        "RV-003",
+        "RV-061"
+      ],
+      "streamId": "stream-09",
+      "taskId": "stream-09-task-03"
+    },
+    "RP-032": {
+      "queryType": "historical_as_of",
+      "reviewIds": [
+        "RV-068",
+        "RV-038"
+      ],
+      "streamId": "stream-11",
+      "taskId": "stream-11-task-03"
+    },
+    "RP-033": {
+      "queryType": "current_in_scope",
+      "reviewIds": [
+        "RV-017",
+        "RV-049"
+      ],
+      "streamId": "stream-02",
+      "taskId": "stream-02-task-01"
+    },
+    "RP-034": {
+      "queryType": "historical_as_of",
+      "reviewIds": [
+        "RV-072",
+        "RV-026"
+      ],
+      "streamId": "stream-02",
+      "taskId": "stream-02-task-03"
+    },
+    "RP-035": {
+      "queryType": "current_in_scope",
+      "reviewIds": [
+        "RV-044",
+        "RV-020"
+      ],
+      "streamId": "stream-06",
+      "taskId": "stream-06-task-01"
+    },
+    "RP-036": {
+      "queryType": "current_in_scope",
+      "reviewIds": [
+        "RV-029",
+        "RV-025"
+      ],
+      "streamId": "stream-10",
+      "taskId": "stream-10-task-01"
+    }
+  },
+  "neutralBehaviorReviewMapping": {
+    "RV-001": {
+      "pairId": "RP-023",
+      "queryType": "historical_as_of",
+      "streamId": "stream-10",
+      "taskId": "stream-10-task-03",
+      "view": "observations-only"
+    },
+    "RV-002": {
+      "pairId": "RP-022",
+      "queryType": "current_in_scope",
+      "streamId": "stream-09",
+      "taskId": "stream-09-task-01",
+      "view": "observations-only"
+    },
+    "RV-003": {
+      "pairId": "RP-031",
+      "queryType": "historical_as_of",
+      "streamId": "stream-09",
+      "taskId": "stream-09-task-03",
+      "view": "observations-only"
+    },
+    "RV-004": {
+      "pairId": "RP-016",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-02",
+      "taskId": "stream-02-task-02",
+      "view": "claims-added"
+    },
+    "RV-005": {
+      "pairId": "RP-001",
+      "queryType": "historical_as_of",
+      "streamId": "stream-03",
+      "taskId": "stream-03-task-03",
+      "view": "observations-only"
+    },
+    "RV-006": {
+      "pairId": "RP-002",
+      "queryType": "current_in_scope",
+      "streamId": "stream-11",
+      "taskId": "stream-11-task-01",
+      "view": "claims-added"
+    },
+    "RV-007": {
+      "pairId": "RP-029",
+      "queryType": "historical_as_of",
+      "streamId": "stream-08",
+      "taskId": "stream-08-task-03",
+      "view": "claims-added"
+    },
+    "RV-008": {
+      "pairId": "RP-010",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-04",
+      "taskId": "stream-04-task-02",
+      "view": "observations-only"
+    },
+    "RV-009": {
+      "pairId": "RP-015",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-03",
+      "taskId": "stream-03-task-02",
+      "view": "claims-added"
+    },
+    "RV-010": {
+      "pairId": "RP-003",
+      "queryType": "current_in_scope",
+      "streamId": "stream-05",
+      "taskId": "stream-05-task-01",
+      "view": "observations-only"
+    },
+    "RV-011": {
+      "pairId": "RP-004",
+      "queryType": "current_in_scope",
+      "streamId": "stream-03",
+      "taskId": "stream-03-task-01",
+      "view": "claims-added"
+    },
+    "RV-012": {
+      "pairId": "RP-006",
+      "queryType": "current_in_scope",
+      "streamId": "stream-12",
+      "taskId": "stream-12-task-01",
+      "view": "claims-added"
+    },
+    "RV-013": {
+      "pairId": "RP-012",
+      "queryType": "historical_as_of",
+      "streamId": "stream-05",
+      "taskId": "stream-05-task-03",
+      "view": "observations-only"
+    },
+    "RV-014": {
+      "pairId": "RP-002",
+      "queryType": "current_in_scope",
+      "streamId": "stream-11",
+      "taskId": "stream-11-task-01",
+      "view": "observations-only"
+    },
+    "RV-015": {
+      "pairId": "RP-020",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-01",
+      "taskId": "stream-01-task-02",
+      "view": "claims-added"
+    },
+    "RV-016": {
+      "pairId": "RP-008",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-05",
+      "taskId": "stream-05-task-02",
+      "view": "observations-only"
+    },
+    "RV-017": {
+      "pairId": "RP-033",
+      "queryType": "current_in_scope",
+      "streamId": "stream-02",
+      "taskId": "stream-02-task-01",
+      "view": "claims-added"
+    },
+    "RV-018": {
+      "pairId": "RP-013",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-11",
+      "taskId": "stream-11-task-02",
+      "view": "observations-only"
+    },
+    "RV-019": {
+      "pairId": "RP-007",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-08",
+      "taskId": "stream-08-task-02",
+      "view": "claims-added"
+    },
+    "RV-020": {
+      "pairId": "RP-035",
+      "queryType": "current_in_scope",
+      "streamId": "stream-06",
+      "taskId": "stream-06-task-01",
+      "view": "claims-added"
+    },
+    "RV-021": {
+      "pairId": "RP-009",
+      "queryType": "current_in_scope",
+      "streamId": "stream-04",
+      "taskId": "stream-04-task-01",
+      "view": "claims-added"
+    },
+    "RV-022": {
+      "pairId": "RP-007",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-08",
+      "taskId": "stream-08-task-02",
+      "view": "observations-only"
+    },
+    "RV-023": {
+      "pairId": "RP-014",
+      "queryType": "current_in_scope",
+      "streamId": "stream-01",
+      "taskId": "stream-01-task-01",
+      "view": "claims-added"
+    },
+    "RV-024": {
+      "pairId": "RP-003",
+      "queryType": "current_in_scope",
+      "streamId": "stream-05",
+      "taskId": "stream-05-task-01",
+      "view": "claims-added"
+    },
+    "RV-025": {
+      "pairId": "RP-036",
+      "queryType": "current_in_scope",
+      "streamId": "stream-10",
+      "taskId": "stream-10-task-01",
+      "view": "observations-only"
+    },
+    "RV-026": {
+      "pairId": "RP-034",
+      "queryType": "historical_as_of",
+      "streamId": "stream-02",
+      "taskId": "stream-02-task-03",
+      "view": "claims-added"
+    },
+    "RV-027": {
+      "pairId": "RP-013",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-11",
+      "taskId": "stream-11-task-02",
+      "view": "claims-added"
+    },
+    "RV-028": {
+      "pairId": "RP-018",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-09",
+      "taskId": "stream-09-task-02",
+      "view": "observations-only"
+    },
+    "RV-029": {
+      "pairId": "RP-036",
+      "queryType": "current_in_scope",
+      "streamId": "stream-10",
+      "taskId": "stream-10-task-01",
+      "view": "claims-added"
+    },
+    "RV-030": {
+      "pairId": "RP-028",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-06",
+      "taskId": "stream-06-task-02",
+      "view": "observations-only"
+    },
+    "RV-031": {
+      "pairId": "RP-025",
+      "queryType": "historical_as_of",
+      "streamId": "stream-12",
+      "taskId": "stream-12-task-03",
+      "view": "claims-added"
+    },
+    "RV-032": {
+      "pairId": "RP-020",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-01",
+      "taskId": "stream-01-task-02",
+      "view": "observations-only"
+    },
+    "RV-033": {
+      "pairId": "RP-011",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-10",
+      "taskId": "stream-10-task-02",
+      "view": "claims-added"
+    },
+    "RV-034": {
+      "pairId": "RP-008",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-05",
+      "taskId": "stream-05-task-02",
+      "view": "claims-added"
+    },
+    "RV-035": {
+      "pairId": "RP-017",
+      "queryType": "historical_as_of",
+      "streamId": "stream-04",
+      "taskId": "stream-04-task-03",
+      "view": "claims-added"
+    },
+    "RV-036": {
+      "pairId": "RP-030",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-12",
+      "taskId": "stream-12-task-02",
+      "view": "observations-only"
+    },
+    "RV-037": {
+      "pairId": "RP-004",
+      "queryType": "current_in_scope",
+      "streamId": "stream-03",
+      "taskId": "stream-03-task-01",
+      "view": "observations-only"
+    },
+    "RV-038": {
+      "pairId": "RP-032",
+      "queryType": "historical_as_of",
+      "streamId": "stream-11",
+      "taskId": "stream-11-task-03",
+      "view": "claims-added"
+    },
+    "RV-039": {
+      "pairId": "RP-021",
+      "queryType": "current_in_scope",
+      "streamId": "stream-08",
+      "taskId": "stream-08-task-01",
+      "view": "observations-only"
+    },
+    "RV-040": {
+      "pairId": "RP-006",
+      "queryType": "current_in_scope",
+      "streamId": "stream-12",
+      "taskId": "stream-12-task-01",
+      "view": "observations-only"
+    },
+    "RV-041": {
+      "pairId": "RP-027",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-07",
+      "taskId": "stream-07-task-02",
+      "view": "observations-only"
+    },
+    "RV-042": {
+      "pairId": "RP-015",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-03",
+      "taskId": "stream-03-task-02",
+      "view": "observations-only"
+    },
+    "RV-043": {
+      "pairId": "RP-027",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-07",
+      "taskId": "stream-07-task-02",
+      "view": "claims-added"
+    },
+    "RV-044": {
+      "pairId": "RP-035",
+      "queryType": "current_in_scope",
+      "streamId": "stream-06",
+      "taskId": "stream-06-task-01",
+      "view": "observations-only"
+    },
+    "RV-045": {
+      "pairId": "RP-023",
+      "queryType": "historical_as_of",
+      "streamId": "stream-10",
+      "taskId": "stream-10-task-03",
+      "view": "claims-added"
+    },
+    "RV-046": {
+      "pairId": "RP-022",
+      "queryType": "current_in_scope",
+      "streamId": "stream-09",
+      "taskId": "stream-09-task-01",
+      "view": "claims-added"
+    },
+    "RV-047": {
+      "pairId": "RP-014",
+      "queryType": "current_in_scope",
+      "streamId": "stream-01",
+      "taskId": "stream-01-task-01",
+      "view": "observations-only"
+    },
+    "RV-048": {
+      "pairId": "RP-024",
+      "queryType": "historical_as_of",
+      "streamId": "stream-06",
+      "taskId": "stream-06-task-03",
+      "view": "observations-only"
+    },
+    "RV-049": {
+      "pairId": "RP-033",
+      "queryType": "current_in_scope",
+      "streamId": "stream-02",
+      "taskId": "stream-02-task-01",
+      "view": "observations-only"
+    },
+    "RV-050": {
+      "pairId": "RP-019",
+      "queryType": "historical_as_of",
+      "streamId": "stream-01",
+      "taskId": "stream-01-task-03",
+      "view": "claims-added"
+    },
+    "RV-051": {
+      "pairId": "RP-029",
+      "queryType": "historical_as_of",
+      "streamId": "stream-08",
+      "taskId": "stream-08-task-03",
+      "view": "observations-only"
+    },
+    "RV-052": {
+      "pairId": "RP-019",
+      "queryType": "historical_as_of",
+      "streamId": "stream-01",
+      "taskId": "stream-01-task-03",
+      "view": "observations-only"
+    },
+    "RV-053": {
+      "pairId": "RP-012",
+      "queryType": "historical_as_of",
+      "streamId": "stream-05",
+      "taskId": "stream-05-task-03",
+      "view": "claims-added"
+    },
+    "RV-054": {
+      "pairId": "RP-016",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-02",
+      "taskId": "stream-02-task-02",
+      "view": "observations-only"
+    },
+    "RV-055": {
+      "pairId": "RP-005",
+      "queryType": "current_in_scope",
+      "streamId": "stream-07",
+      "taskId": "stream-07-task-01",
+      "view": "claims-added"
+    },
+    "RV-056": {
+      "pairId": "RP-028",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-06",
+      "taskId": "stream-06-task-02",
+      "view": "claims-added"
+    },
+    "RV-057": {
+      "pairId": "RP-011",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-10",
+      "taskId": "stream-10-task-02",
+      "view": "observations-only"
+    },
+    "RV-058": {
+      "pairId": "RP-005",
+      "queryType": "current_in_scope",
+      "streamId": "stream-07",
+      "taskId": "stream-07-task-01",
+      "view": "observations-only"
+    },
+    "RV-059": {
+      "pairId": "RP-018",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-09",
+      "taskId": "stream-09-task-02",
+      "view": "claims-added"
+    },
+    "RV-060": {
+      "pairId": "RP-030",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-12",
+      "taskId": "stream-12-task-02",
+      "view": "claims-added"
+    },
+    "RV-061": {
+      "pairId": "RP-031",
+      "queryType": "historical_as_of",
+      "streamId": "stream-09",
+      "taskId": "stream-09-task-03",
+      "view": "claims-added"
+    },
+    "RV-062": {
+      "pairId": "RP-026",
+      "queryType": "historical_as_of",
+      "streamId": "stream-07",
+      "taskId": "stream-07-task-03",
+      "view": "observations-only"
+    },
+    "RV-063": {
+      "pairId": "RP-017",
+      "queryType": "historical_as_of",
+      "streamId": "stream-04",
+      "taskId": "stream-04-task-03",
+      "view": "observations-only"
+    },
+    "RV-064": {
+      "pairId": "RP-021",
+      "queryType": "current_in_scope",
+      "streamId": "stream-08",
+      "taskId": "stream-08-task-01",
+      "view": "claims-added"
+    },
+    "RV-065": {
+      "pairId": "RP-024",
+      "queryType": "historical_as_of",
+      "streamId": "stream-06",
+      "taskId": "stream-06-task-03",
+      "view": "claims-added"
+    },
+    "RV-066": {
+      "pairId": "RP-010",
+      "queryType": "adjacent_scope",
+      "streamId": "stream-04",
+      "taskId": "stream-04-task-02",
+      "view": "claims-added"
+    },
+    "RV-067": {
+      "pairId": "RP-025",
+      "queryType": "historical_as_of",
+      "streamId": "stream-12",
+      "taskId": "stream-12-task-03",
+      "view": "observations-only"
+    },
+    "RV-068": {
+      "pairId": "RP-032",
+      "queryType": "historical_as_of",
+      "streamId": "stream-11",
+      "taskId": "stream-11-task-03",
+      "view": "observations-only"
+    },
+    "RV-069": {
+      "pairId": "RP-001",
+      "queryType": "historical_as_of",
+      "streamId": "stream-03",
+      "taskId": "stream-03-task-03",
+      "view": "claims-added"
+    },
+    "RV-070": {
+      "pairId": "RP-026",
+      "queryType": "historical_as_of",
+      "streamId": "stream-07",
+      "taskId": "stream-07-task-03",
+      "view": "claims-added"
+    },
+    "RV-071": {
+      "pairId": "RP-009",
+      "queryType": "current_in_scope",
+      "streamId": "stream-04",
+      "taskId": "stream-04-task-01",
+      "view": "observations-only"
+    },
+    "RV-072": {
+      "pairId": "RP-034",
+      "queryType": "historical_as_of",
+      "streamId": "stream-02",
+      "taskId": "stream-02-task-03",
+      "view": "observations-only"
+    }
+  },
+  "neutralClaimReviewMapping": {
+    "CR-001": {
+      "claimId": "stream-06-claim-11",
+      "observationId": "stream-06-observation-11",
+      "sourceOrdinal": 11,
+      "streamId": "stream-06"
+    },
+    "CR-002": {
+      "claimId": "stream-07-claim-11",
+      "observationId": "stream-07-observation-11",
+      "sourceOrdinal": 11,
+      "streamId": "stream-07"
+    },
+    "CR-003": {
+      "claimId": "stream-03-claim-04",
+      "observationId": "stream-03-observation-04",
+      "sourceOrdinal": 4,
+      "streamId": "stream-03"
+    },
+    "CR-004": {
+      "claimId": "stream-02-claim-04",
+      "observationId": "stream-02-observation-04",
+      "sourceOrdinal": 4,
+      "streamId": "stream-02"
+    },
+    "CR-005": {
+      "claimId": "stream-11-claim-02",
+      "observationId": "stream-11-observation-02",
+      "sourceOrdinal": 2,
+      "streamId": "stream-11"
+    },
+    "CR-006": {
+      "claimId": "stream-04-claim-04",
+      "observationId": "stream-04-observation-04",
+      "sourceOrdinal": 4,
+      "streamId": "stream-04"
+    },
+    "CR-007": {
+      "claimId": "stream-06-claim-06",
+      "observationId": "stream-06-observation-06",
+      "sourceOrdinal": 6,
+      "streamId": "stream-06"
+    },
+    "CR-008": {
+      "claimId": "stream-03-claim-05",
+      "observationId": "stream-03-observation-05",
+      "sourceOrdinal": 5,
+      "streamId": "stream-03"
+    },
+    "CR-009": {
+      "claimId": "stream-05-claim-02",
+      "observationId": "stream-05-observation-02",
+      "sourceOrdinal": 2,
+      "streamId": "stream-05"
+    },
+    "CR-010": {
+      "claimId": "stream-10-claim-06",
+      "observationId": "stream-10-observation-06",
+      "sourceOrdinal": 6,
+      "streamId": "stream-10"
+    },
+    "CR-011": {
+      "claimId": "stream-07-claim-05",
+      "observationId": "stream-07-observation-05",
+      "sourceOrdinal": 5,
+      "streamId": "stream-07"
+    },
+    "CR-012": {
+      "claimId": "stream-08-claim-05",
+      "observationId": "stream-08-observation-05",
+      "sourceOrdinal": 5,
+      "streamId": "stream-08"
+    },
+    "CR-013": {
+      "claimId": "stream-09-claim-01",
+      "observationId": "stream-09-observation-01",
+      "sourceOrdinal": 1,
+      "streamId": "stream-09"
+    },
+    "CR-014": {
+      "claimId": "stream-03-claim-03",
+      "observationId": "stream-03-observation-03",
+      "sourceOrdinal": 3,
+      "streamId": "stream-03"
+    },
+    "CR-015": {
+      "claimId": "stream-05-claim-10",
+      "observationId": "stream-05-observation-10",
+      "sourceOrdinal": 10,
+      "streamId": "stream-05"
+    },
+    "CR-016": {
+      "claimId": "stream-06-claim-12",
+      "observationId": "stream-06-observation-12",
+      "sourceOrdinal": 12,
+      "streamId": "stream-06"
+    },
+    "CR-017": {
+      "claimId": "stream-01-claim-11",
+      "observationId": "stream-01-observation-11",
+      "sourceOrdinal": 11,
+      "streamId": "stream-01"
+    },
+    "CR-018": {
+      "claimId": "stream-09-claim-03",
+      "observationId": "stream-09-observation-03",
+      "sourceOrdinal": 3,
+      "streamId": "stream-09"
+    },
+    "CR-019": {
+      "claimId": "stream-12-claim-09",
+      "observationId": "stream-12-observation-09",
+      "sourceOrdinal": 9,
+      "streamId": "stream-12"
+    },
+    "CR-020": {
+      "claimId": "stream-03-claim-07",
+      "observationId": "stream-03-observation-07",
+      "sourceOrdinal": 7,
+      "streamId": "stream-03"
+    },
+    "CR-021": {
+      "claimId": "stream-05-claim-04",
+      "observationId": "stream-05-observation-04",
+      "sourceOrdinal": 4,
+      "streamId": "stream-05"
+    },
+    "CR-022": {
+      "claimId": "stream-06-claim-10",
+      "observationId": "stream-06-observation-10",
+      "sourceOrdinal": 10,
+      "streamId": "stream-06"
+    },
+    "CR-023": {
+      "claimId": "stream-02-claim-07",
+      "observationId": "stream-02-observation-07",
+      "sourceOrdinal": 7,
+      "streamId": "stream-02"
+    },
+    "CR-024": {
+      "claimId": "stream-10-claim-07",
+      "observationId": "stream-10-observation-07",
+      "sourceOrdinal": 7,
+      "streamId": "stream-10"
+    },
+    "CR-025": {
+      "claimId": "stream-03-claim-08",
+      "observationId": "stream-03-observation-08",
+      "sourceOrdinal": 8,
+      "streamId": "stream-03"
+    },
+    "CR-026": {
+      "claimId": "stream-08-claim-06",
+      "observationId": "stream-08-observation-06",
+      "sourceOrdinal": 6,
+      "streamId": "stream-08"
+    },
+    "CR-027": {
+      "claimId": "stream-04-claim-09",
+      "observationId": "stream-04-observation-09",
+      "sourceOrdinal": 9,
+      "streamId": "stream-04"
+    },
+    "CR-028": {
+      "claimId": "stream-12-claim-12",
+      "observationId": "stream-12-observation-12",
+      "sourceOrdinal": 12,
+      "streamId": "stream-12"
+    },
+    "CR-029": {
+      "claimId": "stream-11-claim-09",
+      "observationId": "stream-11-observation-09",
+      "sourceOrdinal": 9,
+      "streamId": "stream-11"
+    },
+    "CR-030": {
+      "claimId": "stream-02-claim-03",
+      "observationId": "stream-02-observation-03",
+      "sourceOrdinal": 3,
+      "streamId": "stream-02"
+    },
+    "CR-031": {
+      "claimId": "stream-12-claim-03",
+      "observationId": "stream-12-observation-03",
+      "sourceOrdinal": 3,
+      "streamId": "stream-12"
+    },
+    "CR-032": {
+      "claimId": "stream-04-claim-07",
+      "observationId": "stream-04-observation-07",
+      "sourceOrdinal": 7,
+      "streamId": "stream-04"
+    },
+    "CR-033": {
+      "claimId": "stream-12-claim-06",
+      "observationId": "stream-12-observation-06",
+      "sourceOrdinal": 6,
+      "streamId": "stream-12"
+    },
+    "CR-034": {
+      "claimId": "stream-05-claim-03",
+      "observationId": "stream-05-observation-03",
+      "sourceOrdinal": 3,
+      "streamId": "stream-05"
+    },
+    "CR-035": {
+      "claimId": "stream-05-claim-12",
+      "observationId": "stream-05-observation-12",
+      "sourceOrdinal": 12,
+      "streamId": "stream-05"
+    },
+    "CR-036": {
+      "claimId": "stream-06-claim-02",
+      "observationId": "stream-06-observation-02",
+      "sourceOrdinal": 2,
+      "streamId": "stream-06"
+    },
+    "CR-037": {
+      "claimId": "stream-02-claim-10",
+      "observationId": "stream-02-observation-10",
+      "sourceOrdinal": 10,
+      "streamId": "stream-02"
+    },
+    "CR-038": {
+      "claimId": "stream-05-claim-06",
+      "observationId": "stream-05-observation-06",
+      "sourceOrdinal": 6,
+      "streamId": "stream-05"
+    },
+    "CR-039": {
+      "claimId": "stream-01-claim-06",
+      "observationId": "stream-01-observation-06",
+      "sourceOrdinal": 6,
+      "streamId": "stream-01"
+    },
+    "CR-040": {
+      "claimId": "stream-12-claim-07",
+      "observationId": "stream-12-observation-07",
+      "sourceOrdinal": 7,
+      "streamId": "stream-12"
+    },
+    "CR-041": {
+      "claimId": "stream-12-claim-02",
+      "observationId": "stream-12-observation-02",
+      "sourceOrdinal": 2,
+      "streamId": "stream-12"
+    },
+    "CR-042": {
+      "claimId": "stream-09-claim-06",
+      "observationId": "stream-09-observation-06",
+      "sourceOrdinal": 6,
+      "streamId": "stream-09"
+    },
+    "CR-043": {
+      "claimId": "stream-05-claim-07",
+      "observationId": "stream-05-observation-07",
+      "sourceOrdinal": 7,
+      "streamId": "stream-05"
+    },
+    "CR-044": {
+      "claimId": "stream-01-claim-10",
+      "observationId": "stream-01-observation-10",
+      "sourceOrdinal": 10,
+      "streamId": "stream-01"
+    },
+    "CR-045": {
+      "claimId": "stream-12-claim-10",
+      "observationId": "stream-12-observation-10",
+      "sourceOrdinal": 10,
+      "streamId": "stream-12"
+    },
+    "CR-046": {
+      "claimId": "stream-05-claim-11",
+      "observationId": "stream-05-observation-11",
+      "sourceOrdinal": 11,
+      "streamId": "stream-05"
+    },
+    "CR-047": {
+      "claimId": "stream-08-claim-01",
+      "observationId": "stream-08-observation-01",
+      "sourceOrdinal": 1,
+      "streamId": "stream-08"
+    },
+    "CR-048": {
+      "claimId": "stream-04-claim-12",
+      "observationId": "stream-04-observation-12",
+      "sourceOrdinal": 12,
+      "streamId": "stream-04"
+    },
+    "CR-049": {
+      "claimId": "stream-04-claim-08",
+      "observationId": "stream-04-observation-08",
+      "sourceOrdinal": 8,
+      "streamId": "stream-04"
+    },
+    "CR-050": {
+      "claimId": "stream-03-claim-09",
+      "observationId": "stream-03-observation-09",
+      "sourceOrdinal": 9,
+      "streamId": "stream-03"
+    },
+    "CR-051": {
+      "claimId": "stream-12-claim-11",
+      "observationId": "stream-12-observation-11",
+      "sourceOrdinal": 11,
+      "streamId": "stream-12"
+    },
+    "CR-052": {
+      "claimId": "stream-03-claim-02",
+      "observationId": "stream-03-observation-02",
+      "sourceOrdinal": 2,
+      "streamId": "stream-03"
+    },
+    "CR-053": {
+      "claimId": "stream-09-claim-09",
+      "observationId": "stream-09-observation-09",
+      "sourceOrdinal": 9,
+      "streamId": "stream-09"
+    },
+    "CR-054": {
+      "claimId": "stream-06-claim-09",
+      "observationId": "stream-06-observation-09",
+      "sourceOrdinal": 9,
+      "streamId": "stream-06"
+    },
+    "CR-055": {
+      "claimId": "stream-01-claim-02",
+      "observationId": "stream-01-observation-02",
+      "sourceOrdinal": 2,
+      "streamId": "stream-01"
+    },
+    "CR-056": {
+      "claimId": "stream-03-claim-01",
+      "observationId": "stream-03-observation-01",
+      "sourceOrdinal": 1,
+      "streamId": "stream-03"
+    },
+    "CR-057": {
+      "claimId": "stream-08-claim-10",
+      "observationId": "stream-08-observation-10",
+      "sourceOrdinal": 10,
+      "streamId": "stream-08"
+    },
+    "CR-058": {
+      "claimId": "stream-02-claim-12",
+      "observationId": "stream-02-observation-12",
+      "sourceOrdinal": 12,
+      "streamId": "stream-02"
+    },
+    "CR-059": {
+      "claimId": "stream-09-claim-08",
+      "observationId": "stream-09-observation-08",
+      "sourceOrdinal": 8,
+      "streamId": "stream-09"
+    },
+    "CR-060": {
+      "claimId": "stream-11-claim-07",
+      "observationId": "stream-11-observation-07",
+      "sourceOrdinal": 7,
+      "streamId": "stream-11"
+    },
+    "CR-061": {
+      "claimId": "stream-10-claim-12",
+      "observationId": "stream-10-observation-12",
+      "sourceOrdinal": 12,
+      "streamId": "stream-10"
+    },
+    "CR-062": {
+      "claimId": "stream-12-claim-04",
+      "observationId": "stream-12-observation-04",
+      "sourceOrdinal": 4,
+      "streamId": "stream-12"
+    },
+    "CR-063": {
+      "claimId": "stream-04-claim-06",
+      "observationId": "stream-04-observation-06",
+      "sourceOrdinal": 6,
+      "streamId": "stream-04"
+    },
+    "CR-064": {
+      "claimId": "stream-09-claim-02",
+      "observationId": "stream-09-observation-02",
+      "sourceOrdinal": 2,
+      "streamId": "stream-09"
+    },
+    "CR-065": {
+      "claimId": "stream-04-claim-02",
+      "observationId": "stream-04-observation-02",
+      "sourceOrdinal": 2,
+      "streamId": "stream-04"
+    },
+    "CR-066": {
+      "claimId": "stream-04-claim-01",
+      "observationId": "stream-04-observation-01",
+      "sourceOrdinal": 1,
+      "streamId": "stream-04"
+    },
+    "CR-067": {
+      "claimId": "stream-03-claim-11",
+      "observationId": "stream-03-observation-11",
+      "sourceOrdinal": 11,
+      "streamId": "stream-03"
+    },
+    "CR-068": {
+      "claimId": "stream-12-claim-05",
+      "observationId": "stream-12-observation-05",
+      "sourceOrdinal": 5,
+      "streamId": "stream-12"
+    },
+    "CR-069": {
+      "claimId": "stream-12-claim-01",
+      "observationId": "stream-12-observation-01",
+      "sourceOrdinal": 1,
+      "streamId": "stream-12"
+    },
+    "CR-070": {
+      "claimId": "stream-04-claim-05",
+      "observationId": "stream-04-observation-05",
+      "sourceOrdinal": 5,
+      "streamId": "stream-04"
+    },
+    "CR-071": {
+      "claimId": "stream-01-claim-04",
+      "observationId": "stream-01-observation-04",
+      "sourceOrdinal": 4,
+      "streamId": "stream-01"
+    },
+    "CR-072": {
+      "claimId": "stream-02-claim-08",
+      "observationId": "stream-02-observation-08",
+      "sourceOrdinal": 8,
+      "streamId": "stream-02"
+    },
+    "CR-073": {
+      "claimId": "stream-07-claim-04",
+      "observationId": "stream-07-observation-04",
+      "sourceOrdinal": 4,
+      "streamId": "stream-07"
+    },
+    "CR-074": {
+      "claimId": "stream-07-claim-02",
+      "observationId": "stream-07-observation-02",
+      "sourceOrdinal": 2,
+      "streamId": "stream-07"
+    },
+    "CR-075": {
+      "claimId": "stream-11-claim-06",
+      "observationId": "stream-11-observation-06",
+      "sourceOrdinal": 6,
+      "streamId": "stream-11"
+    },
+    "CR-076": {
+      "claimId": "stream-08-claim-03",
+      "observationId": "stream-08-observation-03",
+      "sourceOrdinal": 3,
+      "streamId": "stream-08"
+    },
+    "CR-077": {
+      "claimId": "stream-10-claim-09",
+      "observationId": "stream-10-observation-09",
+      "sourceOrdinal": 9,
+      "streamId": "stream-10"
+    },
+    "CR-078": {
+      "claimId": "stream-04-claim-03",
+      "observationId": "stream-04-observation-03",
+      "sourceOrdinal": 3,
+      "streamId": "stream-04"
+    },
+    "CR-079": {
+      "claimId": "stream-07-claim-03",
+      "observationId": "stream-07-observation-03",
+      "sourceOrdinal": 3,
+      "streamId": "stream-07"
+    },
+    "CR-080": {
+      "claimId": "stream-07-claim-12",
+      "observationId": "stream-07-observation-12",
+      "sourceOrdinal": 12,
+      "streamId": "stream-07"
+    },
+    "CR-081": {
+      "claimId": "stream-11-claim-01",
+      "observationId": "stream-11-observation-01",
+      "sourceOrdinal": 1,
+      "streamId": "stream-11"
+    },
+    "CR-082": {
+      "claimId": "stream-08-claim-11",
+      "observationId": "stream-08-observation-11",
+      "sourceOrdinal": 11,
+      "streamId": "stream-08"
+    },
+    "CR-083": {
+      "claimId": "stream-08-claim-08",
+      "observationId": "stream-08-observation-08",
+      "sourceOrdinal": 8,
+      "streamId": "stream-08"
+    },
+    "CR-084": {
+      "claimId": "stream-03-claim-10",
+      "observationId": "stream-03-observation-10",
+      "sourceOrdinal": 10,
+      "streamId": "stream-03"
+    },
+    "CR-085": {
+      "claimId": "stream-07-claim-07",
+      "observationId": "stream-07-observation-07",
+      "sourceOrdinal": 7,
+      "streamId": "stream-07"
+    },
+    "CR-086": {
+      "claimId": "stream-11-claim-08",
+      "observationId": "stream-11-observation-08",
+      "sourceOrdinal": 8,
+      "streamId": "stream-11"
+    },
+    "CR-087": {
+      "claimId": "stream-10-claim-10",
+      "observationId": "stream-10-observation-10",
+      "sourceOrdinal": 10,
+      "streamId": "stream-10"
+    },
+    "CR-088": {
+      "claimId": "stream-01-claim-05",
+      "observationId": "stream-01-observation-05",
+      "sourceOrdinal": 5,
+      "streamId": "stream-01"
+    },
+    "CR-089": {
+      "claimId": "stream-07-claim-09",
+      "observationId": "stream-07-observation-09",
+      "sourceOrdinal": 9,
+      "streamId": "stream-07"
+    },
+    "CR-090": {
+      "claimId": "stream-02-claim-09",
+      "observationId": "stream-02-observation-09",
+      "sourceOrdinal": 9,
+      "streamId": "stream-02"
+    },
+    "CR-091": {
+      "claimId": "stream-08-claim-07",
+      "observationId": "stream-08-observation-07",
+      "sourceOrdinal": 7,
+      "streamId": "stream-08"
+    },
+    "CR-092": {
+      "claimId": "stream-10-claim-05",
+      "observationId": "stream-10-observation-05",
+      "sourceOrdinal": 5,
+      "streamId": "stream-10"
+    },
+    "CR-093": {
+      "claimId": "stream-07-claim-06",
+      "observationId": "stream-07-observation-06",
+      "sourceOrdinal": 6,
+      "streamId": "stream-07"
+    },
+    "CR-094": {
+      "claimId": "stream-11-claim-10",
+      "observationId": "stream-11-observation-10",
+      "sourceOrdinal": 10,
+      "streamId": "stream-11"
+    },
+    "CR-095": {
+      "claimId": "stream-06-claim-03",
+      "observationId": "stream-06-observation-03",
+      "sourceOrdinal": 3,
+      "streamId": "stream-06"
+    },
+    "CR-096": {
+      "claimId": "stream-02-claim-01",
+      "observationId": "stream-02-observation-01",
+      "sourceOrdinal": 1,
+      "streamId": "stream-02"
+    },
+    "CR-097": {
+      "claimId": "stream-05-claim-08",
+      "observationId": "stream-05-observation-08",
+      "sourceOrdinal": 8,
+      "streamId": "stream-05"
+    },
+    "CR-098": {
+      "claimId": "stream-06-claim-05",
+      "observationId": "stream-06-observation-05",
+      "sourceOrdinal": 5,
+      "streamId": "stream-06"
+    },
+    "CR-099": {
+      "claimId": "stream-07-claim-08",
+      "observationId": "stream-07-observation-08",
+      "sourceOrdinal": 8,
+      "streamId": "stream-07"
+    },
+    "CR-100": {
+      "claimId": "stream-11-claim-05",
+      "observationId": "stream-11-observation-05",
+      "sourceOrdinal": 5,
+      "streamId": "stream-11"
+    },
+    "CR-101": {
+      "claimId": "stream-01-claim-09",
+      "observationId": "stream-01-observation-09",
+      "sourceOrdinal": 9,
+      "streamId": "stream-01"
+    },
+    "CR-102": {
+      "claimId": "stream-08-claim-02",
+      "observationId": "stream-08-observation-02",
+      "sourceOrdinal": 2,
+      "streamId": "stream-08"
+    },
+    "CR-103": {
+      "claimId": "stream-11-claim-04",
+      "observationId": "stream-11-observation-04",
+      "sourceOrdinal": 4,
+      "streamId": "stream-11"
+    },
+    "CR-104": {
+      "claimId": "stream-09-claim-10",
+      "observationId": "stream-09-observation-10",
+      "sourceOrdinal": 10,
+      "streamId": "stream-09"
+    },
+    "CR-105": {
+      "claimId": "stream-10-claim-01",
+      "observationId": "stream-10-observation-01",
+      "sourceOrdinal": 1,
+      "streamId": "stream-10"
+    },
+    "CR-106": {
+      "claimId": "stream-09-claim-05",
+      "observationId": "stream-09-observation-05",
+      "sourceOrdinal": 5,
+      "streamId": "stream-09"
+    },
+    "CR-107": {
+      "claimId": "stream-01-claim-01",
+      "observationId": "stream-01-observation-01",
+      "sourceOrdinal": 1,
+      "streamId": "stream-01"
+    },
+    "CR-108": {
+      "claimId": "stream-11-claim-03",
+      "observationId": "stream-11-observation-03",
+      "sourceOrdinal": 3,
+      "streamId": "stream-11"
+    },
+    "CR-109": {
+      "claimId": "stream-05-claim-01",
+      "observationId": "stream-05-observation-01",
+      "sourceOrdinal": 1,
+      "streamId": "stream-05"
+    },
+    "CR-110": {
+      "claimId": "stream-10-claim-03",
+      "observationId": "stream-10-observation-03",
+      "sourceOrdinal": 3,
+      "streamId": "stream-10"
+    },
+    "CR-111": {
+      "claimId": "stream-09-claim-04",
+      "observationId": "stream-09-observation-04",
+      "sourceOrdinal": 4,
+      "streamId": "stream-09"
+    },
+    "CR-112": {
+      "claimId": "stream-08-claim-04",
+      "observationId": "stream-08-observation-04",
+      "sourceOrdinal": 4,
+      "streamId": "stream-08"
+    },
+    "CR-113": {
+      "claimId": "stream-03-claim-12",
+      "observationId": "stream-03-observation-12",
+      "sourceOrdinal": 12,
+      "streamId": "stream-03"
+    },
+    "CR-114": {
+      "claimId": "stream-01-claim-12",
+      "observationId": "stream-01-observation-12",
+      "sourceOrdinal": 12,
+      "streamId": "stream-01"
+    },
+    "CR-115": {
+      "claimId": "stream-05-claim-09",
+      "observationId": "stream-05-observation-09",
+      "sourceOrdinal": 9,
+      "streamId": "stream-05"
+    },
+    "CR-116": {
+      "claimId": "stream-01-claim-07",
+      "observationId": "stream-01-observation-07",
+      "sourceOrdinal": 7,
+      "streamId": "stream-01"
+    },
+    "CR-117": {
+      "claimId": "stream-11-claim-11",
+      "observationId": "stream-11-observation-11",
+      "sourceOrdinal": 11,
+      "streamId": "stream-11"
+    },
+    "CR-118": {
+      "claimId": "stream-10-claim-04",
+      "observationId": "stream-10-observation-04",
+      "sourceOrdinal": 4,
+      "streamId": "stream-10"
+    },
+    "CR-119": {
+      "claimId": "stream-06-claim-08",
+      "observationId": "stream-06-observation-08",
+      "sourceOrdinal": 8,
+      "streamId": "stream-06"
+    },
+    "CR-120": {
+      "claimId": "stream-03-claim-06",
+      "observationId": "stream-03-observation-06",
+      "sourceOrdinal": 6,
+      "streamId": "stream-03"
+    },
+    "CR-121": {
+      "claimId": "stream-01-claim-03",
+      "observationId": "stream-01-observation-03",
+      "sourceOrdinal": 3,
+      "streamId": "stream-01"
+    },
+    "CR-122": {
+      "claimId": "stream-09-claim-11",
+      "observationId": "stream-09-observation-11",
+      "sourceOrdinal": 11,
+      "streamId": "stream-09"
+    },
+    "CR-123": {
+      "claimId": "stream-09-claim-12",
+      "observationId": "stream-09-observation-12",
+      "sourceOrdinal": 12,
+      "streamId": "stream-09"
+    },
+    "CR-124": {
+      "claimId": "stream-06-claim-07",
+      "observationId": "stream-06-observation-07",
+      "sourceOrdinal": 7,
+      "streamId": "stream-06"
+    },
+    "CR-125": {
+      "claimId": "stream-04-claim-11",
+      "observationId": "stream-04-observation-11",
+      "sourceOrdinal": 11,
+      "streamId": "stream-04"
+    },
+    "CR-126": {
+      "claimId": "stream-08-claim-12",
+      "observationId": "stream-08-observation-12",
+      "sourceOrdinal": 12,
+      "streamId": "stream-08"
+    },
+    "CR-127": {
+      "claimId": "stream-06-claim-01",
+      "observationId": "stream-06-observation-01",
+      "sourceOrdinal": 1,
+      "streamId": "stream-06"
+    },
+    "CR-128": {
+      "claimId": "stream-07-claim-01",
+      "observationId": "stream-07-observation-01",
+      "sourceOrdinal": 1,
+      "streamId": "stream-07"
+    },
+    "CR-129": {
+      "claimId": "stream-06-claim-04",
+      "observationId": "stream-06-observation-04",
+      "sourceOrdinal": 4,
+      "streamId": "stream-06"
+    },
+    "CR-130": {
+      "claimId": "stream-05-claim-05",
+      "observationId": "stream-05-observation-05",
+      "sourceOrdinal": 5,
+      "streamId": "stream-05"
+    },
+    "CR-131": {
+      "claimId": "stream-11-claim-12",
+      "observationId": "stream-11-observation-12",
+      "sourceOrdinal": 12,
+      "streamId": "stream-11"
+    },
+    "CR-132": {
+      "claimId": "stream-02-claim-05",
+      "observationId": "stream-02-observation-05",
+      "sourceOrdinal": 5,
+      "streamId": "stream-02"
+    },
+    "CR-133": {
+      "claimId": "stream-10-claim-08",
+      "observationId": "stream-10-observation-08",
+      "sourceOrdinal": 8,
+      "streamId": "stream-10"
+    },
+    "CR-134": {
+      "claimId": "stream-09-claim-07",
+      "observationId": "stream-09-observation-07",
+      "sourceOrdinal": 7,
+      "streamId": "stream-09"
+    },
+    "CR-135": {
+      "claimId": "stream-04-claim-10",
+      "observationId": "stream-04-observation-10",
+      "sourceOrdinal": 10,
+      "streamId": "stream-04"
+    },
+    "CR-136": {
+      "claimId": "stream-01-claim-08",
+      "observationId": "stream-01-observation-08",
+      "sourceOrdinal": 8,
+      "streamId": "stream-01"
+    },
+    "CR-137": {
+      "claimId": "stream-10-claim-02",
+      "observationId": "stream-10-observation-02",
+      "sourceOrdinal": 2,
+      "streamId": "stream-10"
+    },
+    "CR-138": {
+      "claimId": "stream-07-claim-10",
+      "observationId": "stream-07-observation-10",
+      "sourceOrdinal": 10,
+      "streamId": "stream-07"
+    },
+    "CR-139": {
+      "claimId": "stream-02-claim-11",
+      "observationId": "stream-02-observation-11",
+      "sourceOrdinal": 11,
+      "streamId": "stream-02"
+    },
+    "CR-140": {
+      "claimId": "stream-02-claim-06",
+      "observationId": "stream-02-observation-06",
+      "sourceOrdinal": 6,
+      "streamId": "stream-02"
+    },
+    "CR-141": {
+      "claimId": "stream-12-claim-08",
+      "observationId": "stream-12-observation-08",
+      "sourceOrdinal": 8,
+      "streamId": "stream-12"
+    },
+    "CR-142": {
+      "claimId": "stream-08-claim-09",
+      "observationId": "stream-08-observation-09",
+      "sourceOrdinal": 9,
+      "streamId": "stream-08"
+    },
+    "CR-143": {
+      "claimId": "stream-02-claim-02",
+      "observationId": "stream-02-observation-02",
+      "sourceOrdinal": 2,
+      "streamId": "stream-02"
+    },
+    "CR-144": {
+      "claimId": "stream-10-claim-11",
+      "observationId": "stream-10-observation-11",
+      "sourceOrdinal": 11,
+      "streamId": "stream-10"
+    }
+  },
+  "reviewArtifacts": {
+    "behavior": {
+      "adjudication": {
+        "agreementCounts": {
+          "behaviorEquivalent": 36,
+          "entries": 72,
+          "fullActionPartitions": 72,
+          "pairs": 36,
+          "prohibitedActionSets": 72,
+          "requiredActionSets": 72
+        },
+        "ambiguityCounts": {
+          "entries": 0
+        },
+        "path": "artifacts/fixture-review-adjudication.json",
+        "sha256": "ddd04c1e6e53f95a3ad64fcfa917086b5369e0fbebe8093986c7a8cf2ed3b394",
+        "status": "passed"
+      },
+      "entryCount": 72,
+      "labels": {
+        "path": "artifacts/fixture-review-labels.blind.json",
+        "sha256": "835e06a7e39d7fec33279eafd82698bb9f237ac5c761527a876e3b59bd67284b"
+      },
+      "pairCount": 36,
+      "path": "artifacts/fixture-review-packet.md",
+      "readerVisibleFields": [
+        "actions",
+        "observations",
+        "derivedClaims",
+        "scopePath",
+        "queryAt",
+        "conversation",
+        "targetQuery"
+      ],
+      "sha256": "54a29bb8200b7ca9067571fb527095822851c0871127c5ebd52755dc27f7c49f"
+    },
+    "claims": {
+      "adjudication": {
+        "agreementCounts": {
+          "effectiveTimeAndEvidenceBinding": 144,
+          "entries": 144,
+          "exactScope": 144,
+          "fullPasses": 144,
+          "kind": 144,
+          "statementSupport": 144,
+          "subjectKey": 144,
+          "supersession": 144
+        },
+        "ambiguityCounts": {
+          "entries": 0
+        },
+        "path": "artifacts/fixture-claim-review-adjudication.json",
+        "sha256": "c725061f1fddcb2e2d9fa98519e5891b5f51b7477cb9bf88613b6751d0b7fa43",
+        "status": "passed"
+      },
+      "entryCount": 144,
+      "labels": {
+        "path": "artifacts/fixture-claim-review-labels.blind.json",
+        "sha256": "12162168a21d5f1140752de9ed501c33f9624ef542ee9f3bb00a23baea096cd0"
+      },
+      "path": "artifacts/fixture-claim-review-packet.md",
+      "readerVisibleFields": [
+        "observation",
+        "claim",
+        "earlierClaimContext"
+      ],
+      "sha256": "223c0f3cc9d6d974bbc6f60d15b6fab053cd75677d731da83667647be45d4543"
+    }
+  },
+  "reviewStatus": "approved",
+  "schemaVersion": 1,
+  "shuffleSeed": 20260831,
+  "status": "frozen",
+  "streams": [
+    {
+      "claimSetSha256": "c3c56b1dec009275aab99dcd79c73399654c86a77e3d2a6ba9afaec36d843c60",
+      "observationSetSha256": "10327e63ec9e5075a769d5c0f0d235d2491a2dc9a1a270d675747c9b32d83d84",
+      "sourceSha256": "d9a9d43ec315f086978a915cf98a476b75aef66b5ec78d681ee23086782cdfd2",
+      "streamId": "stream-01",
+      "taskSetSha256": "faf7fc69e40a533b06b9d11a975b23ba5932d1361db130e2fea614292deadc1c"
+    },
+    {
+      "claimSetSha256": "1600f34cb63713d8c407f0ebc9c412b3f64d8cc35c4f0b82fc20d00aa084b67c",
+      "observationSetSha256": "f91aca7737771ce0bd5aa7283b5b7c5df56b2c9b84c854080533d1deb1ac84cf",
+      "sourceSha256": "0166357573c4612876f1b42acf071ac0c200502aee644dcd342fe8bc7438a8c6",
+      "streamId": "stream-02",
+      "taskSetSha256": "8982bc256576c2a6ea0f587d935b53160b0fc0fe72d0bc151af125ed71c3c222"
+    },
+    {
+      "claimSetSha256": "f670d3d7fbb2590a231cf8b936a96532f3d13a7d22d21abf5f89ce465e0f24ad",
+      "observationSetSha256": "275f38caec93531d889414e9558c67359d3eba5d07f032665751d5a3ec6c7c37",
+      "sourceSha256": "14dd9f1588569705095d0bc7ab764ae90138205308c78f8f6e39a5738dda691a",
+      "streamId": "stream-03",
+      "taskSetSha256": "c141faa05272b7091169a9a48301b0ab2ce6c2f320e918c16f5ea1a3843e0f8b"
+    },
+    {
+      "claimSetSha256": "378f2d87ad776168540a2fee06758c68a4cb4bc1ab65c79e64397262a327f5dc",
+      "observationSetSha256": "31c36b4b90ba8a160ea25ab01a3abf91681717f7c93a8a252400d707e7a60499",
+      "sourceSha256": "fe75be1e826b5c3f777e99648f4ecce2249111d0f84a7d3ccbe6089928f1c85b",
+      "streamId": "stream-04",
+      "taskSetSha256": "c03fc225305105c05bdf068ddbd48261729b2fc270e0653f096e4257e1e8d74b"
+    },
+    {
+      "claimSetSha256": "c6624a6f6d5635e36b4f1c95c18e2a40ff0f17ea506314d4acd09d3c8e75bdc0",
+      "observationSetSha256": "5c9ba9c70cdac10f3babab26d9c349350175479e746767b5e4d93970538c5e21",
+      "sourceSha256": "e772861f1ca87a85135661b886425734f7ac379e44558879f22b0585a2ba7bdd",
+      "streamId": "stream-05",
+      "taskSetSha256": "b897c293e5378f86f706d81752f9f68633f17e74aa79037d0c4b42cf1f82e566"
+    },
+    {
+      "claimSetSha256": "a5e0827e8d1862ba061c549094b0e33362bd33aa6658386ca834bb6e423d494c",
+      "observationSetSha256": "c1ecaa6dbda1c439c8d49139997d7cf78954eb962ebdfcec6dd754635a0f56ff",
+      "sourceSha256": "3b4cca6fabff8d0373e139693f2e5e2272aa459b500cd10e621db2ab21a15098",
+      "streamId": "stream-06",
+      "taskSetSha256": "39804fb05ca076343914abcdc555cb11e4b221e314ce14aa0941eda31452145b"
+    },
+    {
+      "claimSetSha256": "cafa00b61f093f002ade841d9abbb2b6b66dff1b8302446bc92b06df67388753",
+      "observationSetSha256": "6ede80f2bca2342ecde10720922438f77acfeef271ebcdf61f6f9800cc929012",
+      "sourceSha256": "61c130f4bcf85886caeeedfb2299346639d9e37ad1e6bd955265c7cb25c48489",
+      "streamId": "stream-07",
+      "taskSetSha256": "da33ec73b27d52a449d3564e57fc7a48c853b5b1dd2b1d4a767a4d6484e236b8"
+    },
+    {
+      "claimSetSha256": "17433b035a3cb6c0748e50db537be9d82b566df90d4ccac27f3281822a31b789",
+      "observationSetSha256": "49224754886e7ccd1bb3b53e06b1dfda5fb4458e291c781148d5ac2b5eccf24b",
+      "sourceSha256": "f3d430bf746f8c26750478d667f13d436c8464d41e86daef27e3c81304ae83a3",
+      "streamId": "stream-08",
+      "taskSetSha256": "493435eb1854751419a8f8b63eeb98fafbed2828278f72cd25c08daa24a16a10"
+    },
+    {
+      "claimSetSha256": "0aaed67e1af7ab39c03a52227ab55f93af9d33ebfa995a36e094dbbd75f22aba",
+      "observationSetSha256": "5cc8def6e28ac0ca05279a087427f1fdc4fa3eec4d8f59abdf3926f5608ff7b9",
+      "sourceSha256": "8240824b88cf84983b3bbf56d0e6998a47042f77fdb2feceaa6b83754e8c404b",
+      "streamId": "stream-09",
+      "taskSetSha256": "7f076681a9f702cdb979cf6f19f86ddfd157925145fe591aacd3c3cf4ad2b196"
+    },
+    {
+      "claimSetSha256": "d6ef74f8526f04836ded7134bfb8a45f945c6bc049b9fa36fa24e3ecb31bded0",
+      "observationSetSha256": "b077692f44c9fd12cc96b64140798dbba9e24871f09bd91e17927b82e679e1c8",
+      "sourceSha256": "7ee9367f7068457cb533660b311b7dfb995f48227180207f52f0bf526d583d83",
+      "streamId": "stream-10",
+      "taskSetSha256": "c4ef73a61064c490ac45d8a18cd0d87d1f83b82b8556761a2f8d226350413bb5"
+    },
+    {
+      "claimSetSha256": "3e92cffb545990302bbd464ca7889bb51d78a4d7e52929cb9f0070b1e0f7c580",
+      "observationSetSha256": "352dd2d9ab87aa450f30d69cab8570fc5791dc970ca9a27a22dbdcb9ebcf6a88",
+      "sourceSha256": "1f01ee237ed27232a6063493f8d662230bd799c6a4e43eb45ff6740c562d9aa6",
+      "streamId": "stream-11",
+      "taskSetSha256": "03df5d11de039e3d1707b2a2fa2248a7640d9879f6125cdcb290255c543ca59f"
+    },
+    {
+      "claimSetSha256": "b95e7b91c42072f80b7d8ffd015a543d3c53693073d5db625e95a73da5ecc90b",
+      "observationSetSha256": "8bf7870c0a894666460f6f56874275f5d1ffac6811ea08dfe9de4459a6d4efd4",
+      "sourceSha256": "0d46dd670dbf990089e9abc4fb8b6be3e6014231da7ed3ff99819155397d72d0",
+      "streamId": "stream-12",
+      "taskSetSha256": "1548f7946423cbb78cc66f29d75f57ae90f78044337076c55353ed267d81e529"
+    }
+  ]
+}

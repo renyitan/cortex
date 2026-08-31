@@ -1,0 +1,27 @@
+{
+  "adjudicationType": "behavior-review",
+  "agreementCounts": {
+    "behaviorEquivalent": 36,
+    "entries": 72,
+    "fullActionPartitions": 72,
+    "pairs": 36,
+    "prohibitedActionSets": 72,
+    "requiredActionSets": 72
+  },
+  "ambiguityCounts": {
+    "entries": 0
+  },
+  "fixtureContentSha256": "4ce13443e52f9594151d1a1ed96044955dd853b07048af9592564d9774e8b6b9",
+  "labels": {
+    "path": "artifacts/fixture-review-labels.blind.json",
+    "sha256": "835e06a7e39d7fec33279eafd82698bb9f237ac5c761527a876e3b59bd67284b"
+  },
+  "packet": {
+    "path": "artifacts/fixture-review-packet.md",
+    "sha256": "54a29bb8200b7ca9067571fb527095822851c0871127c5ebd52755dc27f7c49f"
+  },
+  "reviewDate": "2026-08-31",
+  "reviewerLimitation": "Labels were produced from the review packet alone, following its Reader protocol, with Phase 1 completed before the Phase 2 pair map was opened; no fixture source, manifest, tests, mappings, prior labels, or gold data were consulted. Each entry partitions all five catalog actions: the action that governing guidance requires for the target subject at queryAt is listed as required, and every other action is listed as prohibited under the rule against calling unrelated catalog actions, so entries whose governing guidance is an explicit no-action rule prohibit all five. Guidance whose scope key is absent from scopePath was treated as inapplicable, and guidance about a different subject was treated as coexisting rather than conflicting. Pair equivalence judges only whether two entries yield the same required and prohibited partition, not whether their supporting evidence is presented identically.",
+  "schemaVersion": 1,
+  "status": "passed"
+}

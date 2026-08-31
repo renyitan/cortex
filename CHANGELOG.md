@@ -1,5 +1,16 @@
 # Changelog
 
+## Research closure · 2026-08-31
+
+- Parks Cortex product development after repeated evaluation did not establish an advantage over
+  direct use of the same evidence.
+- Publishes the investigation history, negative results, causal ablation, and invalid
+  lossless-formation instrument.
+- Adds the exact synthetic lossless fixture, its outcome-blind review package, deterministic
+  generator, and regression tests.
+- Publishes the evaluation-only lossless diagnostic without changing the `0.33.0` plugin payload.
+- Reframes Cortex as an unsupported research artifact and reference implementation.
+
 ## 0.33.0 · reviewed release
 
 - Defines Cortex as a cognition framework for long-running agents.

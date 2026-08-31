@@ -1,23 +1,48 @@
-# cortex
+# Cortex
 
-[![Project status: active](https://img.shields.io/badge/status-active-2ea44f)](https://github.com/renyitan/cortex)
+[![Project status: research complete](https://img.shields.io/badge/status-research%20complete-6f42c1)](docs/investigation/conclusion.md)
 [![CI](https://github.com/renyitan/cortex/actions/workflows/ci.yml/badge.svg)](https://github.com/renyitan/cortex/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> [!NOTE]
-> **Cortex is under active development.** Version `0.33.0` remains the latest reviewed plugin
-> baseline while newer evaluation and lifecycle work evolves on `main`.
+> [!IMPORTANT]
+> **Cortex is a completed experimental investigation. Development is parked.** Controlled
+> evaluations did not show that Cortex improved task results over giving the same evidence directly
+> to the model. The repository is public so its implementation, evaluation methods, and negative
+> results can be inspected and reused.
 
-Cortex is a cognition framework for long-running coding agents. It packages a memory
-model, five procedural skills, and a small host adapter that binds those instructions to an agent's
-own persona. The agent's memory and work stay as Markdown in the agent's repository.
+Cortex investigated whether a structured cognition lifecycle could help long-running coding agents
+use durable memory. It packages a reference plugin, five procedural skills, local state tools, and
+an evaluation harness. The agent's memory and work remain operator-owned Markdown.
 
-The project is useful as a concrete design reference for three ideas:
+## Investigation outcome
 
-1. durable agent state should remain readable and owned by its operator;
-2. rebuildable indexes should be separated from noncanonical but irrecoverable audit evidence;
-3. lifecycle claims should distinguish what a host enforces from what the model is merely asked to
-   do.
+| Question | Result |
+|---|---|
+| Can a controller enforce the lifecycle mechanically? | Yes |
+| Did Cortex beat direct use of the same retrieved evidence? | No: 246/300 versus 254/300 |
+| Where did the tested package lose performance? | Semantic formation scored 0/60; enforced use reduced 48/60 to 29/60 |
+| Did a lossless formation design resolve the problem? | Not determined; its oracle reader failed the frozen reliability gate |
+| Product decision | Park development and do not claim a behavioral advantage |
+
+The strongest supported conclusion is negative but useful: the tested Cortex package added model
+work and complexity without establishing better delayed-task accuracy than direct evidence use.
+The repository therefore presents Cortex as a research artifact and reference implementation, not
+as a recommended superior memory system.
+
+Read the [investigation history](docs/investigation/README.md), the
+[final conclusion](docs/investigation/conclusion.md), and the
+[evaluation results](evaluation/results/README.md).
+
+## What remains useful
+
+The investigation produced inspectable patterns that remain useful independently of the product
+claim:
+
+1. durable agent state can remain readable and owned by its operator;
+2. rebuildable indexes can be separated from canonical state and irrecoverable audit evidence;
+3. host-enforced behavior can be distinguished from model-requested behavior;
+4. memory writes can use explicit plans, hashes, receipts, and recovery;
+5. task accuracy, memory quality, retrieval, and lifecycle completion must be scored separately.
 
 ## Runtime model
 
@@ -61,7 +86,12 @@ or operator judgment.
 
 See [Findings and limitations](docs/findings.md) for the concise evidence boundary.
 
-## Run Cortex
+## Explore the reference implementation
+
+> [!CAUTION]
+> Cortex is unsupported research software. Do not adopt it because you expect better model
+> performance. Use it to inspect the design, reproduce deterministic mechanism tests, or build and
+> evaluate a maintained fork.
 
 Requirements:
 
@@ -110,7 +140,7 @@ At session start, the Copilot hook runs `cortex-mount`. In a repository containi
 This is loading and observability, not proof that recalled content reached or changed the model.
 The full data flow and failure behavior are documented in [Architecture](docs/architecture.md).
 
-## Tests
+## Validation
 
 From the Cortex source checkout, run the repository linter and deterministic regression tests:
 
@@ -119,15 +149,19 @@ scripts/cortex-lint
 for test in tests/test-*; do "$test"; done
 ```
 
-These tests cover Cortex's local mechanisms and state contracts. They do not evaluate model
-behavior or task quality.
+These tests cover Cortex's local mechanisms and state contracts. The separate evaluation harness
+contains model-backed experiments and may incur provider cost.
 
 ## Repository guide
 
 | Path | Read this for |
 |---|---|
+| [`docs/investigation/README.md`](docs/investigation/README.md) | The sequence of research questions and decisions |
+| [`docs/investigation/conclusion.md`](docs/investigation/conclusion.md) | Why product development was parked and what could justify reopening it |
+| [`evaluation/README.md`](evaluation/README.md) | Evaluation code, public fixtures, evidence boundaries, and rerun guidance |
+| [`evaluation/results/README.md`](evaluation/results/README.md) | Public result reports for the repeated pilot, causal ablation, and lossless instrument |
 | [`docs/architecture.md`](docs/architecture.md) | Implemented components, startup flow, state ownership, and failure boundaries |
-| [`docs/findings.md`](docs/findings.md) | Current evidence boundaries, including the reviewed `v0.33.0` baseline |
+| [`docs/findings.md`](docs/findings.md) | Supported conclusions, negative findings, and evidence limits |
 | [`plugins/cortex/identity/capabilities.md`](plugins/cortex/identity/capabilities.md) | Enforcement levels and authority boundaries |
 | [`plugins/cortex/identity/memory-visibility.md`](plugins/cortex/identity/memory-visibility.md) | Canonical memory, projections, and retrieval visibility |
 | [`plugins/cortex/identity/cognition-events.md`](plugins/cortex/identity/cognition-events.md) | Local event schema and privacy floor |
@@ -136,6 +170,6 @@ behavior or task quality.
 
 ## License and citation
 
-Forks and adaptations are permitted under the [MIT License](LICENSE). Review the
+Forks and adaptations are permitted under the [MIT License](LICENSE). Review the unsupported
 [`SECURITY.md`](SECURITY.md) boundary before adoption. Citation metadata is available in
 [`CITATION.cff`](CITATION.cff).
