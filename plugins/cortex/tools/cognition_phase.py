@@ -45,7 +45,6 @@ MAX_LEASE_SECONDS = 1800
 TOKEN_RE = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 REASON_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 TERMINAL_PHASE = {"completed_ok", "completed_failed", "abandoned"}
-TERMINAL_EXPECTATION = {"invoked", "skipped", "missed"}
 
 
 class PhaseInputError(Exception):

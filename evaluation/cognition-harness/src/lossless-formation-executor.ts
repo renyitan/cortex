@@ -82,7 +82,6 @@ export interface LosslessFormationRunner {
 
 export interface LosslessFormationExecutorOptions {
   runner: LosslessFormationRunner;
-  model: string;
   contextWindow: number;
   maxOutputTokens: number;
   countTokens?: (text: string) => number;
@@ -95,18 +94,6 @@ export interface FormationObservationReceipt {
   candidates: number;
   bundle: LosslessMemoryBundle;
   telemetry: ExecutionTelemetry;
-}
-
-export interface FormationRunResult {
-  status: "completed" | "failed";
-  failureKind?: "condition" | "infrastructure" | "integrity";
-  completedObservations: number;
-  bundle: LosslessMemoryBundle;
-  receipts: FormationObservationReceipt[];
-  error?: {
-    name: string;
-    message: string;
-  };
 }
 
 interface FormationToolReceipt {
@@ -247,13 +234,6 @@ export function countLosslessTokens(text: string): number {
   return TOKENIZER.encode(text).length;
 }
 
-function errorDetails(error: unknown): { name: string; message: string } {
-  if (error instanceof Error) {
-    return { name: error.name, message: error.message };
-  }
-  return { name: "Error", message: String(error) };
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -298,7 +278,6 @@ export function formationFailureKind(
 
 export class LosslessFormationExecutor {
   private readonly runner: LosslessFormationRunner;
-  private readonly model: string;
   private readonly contextWindow: number;
   private readonly maxOutputTokens: number;
   private readonly countTokens: (text: string) => number;
@@ -306,7 +285,6 @@ export class LosslessFormationExecutor {
 
   constructor(options: LosslessFormationExecutorOptions) {
     this.runner = options.runner;
-    this.model = options.model;
     this.contextWindow = options.contextWindow;
     this.maxOutputTokens = options.maxOutputTokens;
     this.countTokens = options.countTokens ?? countLosslessTokens;
@@ -366,45 +344,4 @@ export class LosslessFormationExecutor {
     };
   }
 
-  async runStream(
-    initialBundleValue: LosslessMemoryBundle,
-    observations: readonly LosslessObservation[],
-    repetition: number,
-  ): Promise<FormationRunResult> {
-    let bundle = parseLosslessMemoryBundle(initialBundleValue);
-    const receipts: FormationObservationReceipt[] = [];
-    try {
-      for (const [index, observation] of observations.entries()) {
-        if (bundle.observations.length !== index) {
-          throw new Error("deterministic WAKE mounted an unexpected observation prefix");
-        }
-        const receipt = await this.executeObservation(
-          bundle,
-          observation,
-          repetition,
-        );
-        bundle = receipt.bundle;
-        receipts.push(receipt);
-      }
-      return {
-        status: "completed",
-        completedObservations: observations.length,
-        bundle,
-        receipts,
-      };
-    } catch (error) {
-      return {
-        status: "failed",
-        failureKind: formationFailureKind(error),
-        completedObservations: receipts.length,
-        bundle,
-        receipts,
-        error: errorDetails(error),
-      };
-    }
-  }
-
-  modelId(): string {
-    return this.model;
-  }
 }

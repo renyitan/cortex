@@ -101,7 +101,6 @@ test("uses one fresh receipt per observation and never exposes future content", 
   ]);
   const executor = new LosslessFormationExecutor({
     runner,
-    model: "scripted",
     contextWindow: 100_000,
     maxOutputTokens: 1_000,
     countTokens: (text) => text.length,
@@ -134,7 +133,6 @@ test("preflights the complete request and refuses context overflow", async () =>
   const runner = new ScriptedFormationRunner([{ candidates: [] }]);
   const executor = new LosslessFormationExecutor({
     runner,
-    model: "scripted",
     contextWindow: 2,
     maxOutputTokens: 1,
     countTokens: () => 2,
@@ -194,7 +192,6 @@ test("preserves paid telemetry when host supersession validation rejects a recei
   );
   const executor = new LosslessFormationExecutor({
     runner,
-    model: "scripted",
     contextWindow: 100_000,
     maxOutputTokens: 1_000,
     countTokens: (text) => text.length,

@@ -1246,15 +1246,6 @@ def _reconcile_receipt_locked(path: Path, root: Path) -> dict:
     return receipt
 
 
-def load_plan(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text())
-    except OSError:
-        fail("plan_unreadable")
-    except json.JSONDecodeError:
-        fail("plan_json_invalid")
-
-
 def load_plan_relative(root: Path, relative: str) -> dict:
     try:
         return json.loads(_secure_read(root, relative))

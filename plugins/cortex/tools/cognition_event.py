@@ -22,7 +22,6 @@ except ImportError:
     msvcrt = None
 
 SCHEMA_VERSION = "1"
-EVENT_RE = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
 TOKEN_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -278,7 +277,7 @@ def build_event(
     hashes: dict[str, str] | None = None,
     attributes: dict[str, str | int | bool] | None = None,
 ) -> dict:
-    if not EVENT_RE.fullmatch(event) or event not in EVENT_STATUSES:
+    if event not in EVENT_STATUSES:
         raise ValueError("invalid event name")
     if status not in EVENT_STATUSES[event]:
         raise ValueError("invalid event status")

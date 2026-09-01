@@ -400,7 +400,6 @@ export interface LosslessAnswerRunner {
 
 export interface LosslessAnswerExecutorOptions {
   runner: LosslessAnswerRunner;
-  model: string;
   contextWindow: number;
   maxOutputTokens: number;
   countTokens?: (text: string) => number;
@@ -1565,7 +1564,6 @@ export function renderedDirectReaderRequest(
 
 export class LosslessAnswerExecutor {
   private readonly runner: LosslessAnswerRunner;
-  private readonly model: string;
   private readonly contextWindow: number;
   private readonly maxOutputTokens: number;
   private readonly countTokens: (text: string) => number;
@@ -1573,7 +1571,6 @@ export class LosslessAnswerExecutor {
 
   constructor(options: LosslessAnswerExecutorOptions) {
     this.runner = options.runner;
-    this.model = options.model;
     this.contextWindow = options.contextWindow;
     this.maxOutputTokens = options.maxOutputTokens;
     this.countTokens = options.countTokens ?? countLosslessTokens;
@@ -1611,10 +1608,6 @@ export class LosslessAnswerExecutor {
         createAnswerTool(stream.actions, (events) => accept(events)),
     });
     return { events: result.value, telemetry: result.telemetry };
-  }
-
-  modelId(): string {
-    return this.model;
   }
 }
 

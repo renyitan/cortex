@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   MAB_CHUNK_TOKEN_LIMIT,
@@ -1376,8 +1376,4 @@ export function defaultMabThresholds(): MabBatchThresholds {
     maximumCostUsd: 25,
     bootstrapSamples: 10_000,
   };
-}
-
-export function mabBatchDirectory(root: string, batchId: string): string {
-  return resolve(root, basename(batchId));
 }

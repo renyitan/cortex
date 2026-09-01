@@ -71,18 +71,6 @@ export class CortexSourceLoader {
     };
   }
 
-  async manifest(): Promise<
-    CortexSourceManifest
-  > {
-    const entries = await Promise.all(
-      (["wake", "work", "sleep", "curate"] as const).map(async (phase) => {
-        const source = await this.load(phase);
-        return [phase, { files: source.files, sha256: source.digest }] as const;
-      }),
-    );
-    return Object.fromEntries(entries) as CortexSourceManifest;
-  }
-
   async snapshot(): Promise<CortexSourceSnapshot> {
     const phases = await Promise.all(
       (["wake", "work", "sleep", "curate"] as const).map(async (phase) => [

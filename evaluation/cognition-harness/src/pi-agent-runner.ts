@@ -49,10 +49,6 @@ export class PiAgentRunError extends Error {
   }
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function isAssistantMessage(message: AgentMessage): message is AssistantMessage {
   return (
     !!message &&
@@ -184,7 +180,7 @@ export class PiAgentRunner {
       try {
         await agent.prompt(spec.userPrompt);
       } catch (error) {
-        attemptError = errorMessage(error);
+        attemptError = error instanceof Error ? error.message : String(error);
       } finally {
         clearTimeout(timer);
       }

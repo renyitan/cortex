@@ -30,10 +30,6 @@ const PRIVATE_FILE_MODE = 0o600;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 
-function abortSignal(options?: AuthOperationOptions): AbortSignal | undefined {
-  return options?.signal;
-}
-
 function validateProviderId(providerId: string): void {
   if (!PROVIDER_ID.test(providerId)) {
     throw new Error(`invalid credential provider id: ${providerId}`);
@@ -134,13 +130,13 @@ export class PrivateFileCredentialStore implements CredentialStore {
     options?: AuthOperationOptions,
   ): Promise<Credential | undefined> {
     validateProviderId(providerId);
-    abortSignal(options)?.throwIfAborted();
+    options?.signal?.throwIfAborted();
     const credential = (await this.readDocument()).credentials[providerId];
     return credential ? structuredClone(credential) : undefined;
   }
 
   async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
-    abortSignal(options)?.throwIfAborted();
+    options?.signal?.throwIfAborted();
     const document = await this.readDocument();
     return Object.entries(document.credentials)
       .map(([providerId, credential]) => ({ providerId, type: credential.type }))
@@ -156,13 +152,13 @@ export class PrivateFileCredentialStore implements CredentialStore {
   ): Promise<Credential | undefined> {
     validateProviderId(providerId);
     return this.withLock(async () => {
-      abortSignal(options)?.throwIfAborted();
+      options?.signal?.throwIfAborted();
       const document = await this.readDocument();
       const current = document.credentials[providerId];
       const proposed = await modifyCredential(
         current ? structuredClone(current) : undefined,
       );
-      abortSignal(options)?.throwIfAborted();
+      options?.signal?.throwIfAborted();
       if (proposed === undefined) {
         return current ? structuredClone(current) : undefined;
       }
@@ -171,18 +167,18 @@ export class PrivateFileCredentialStore implements CredentialStore {
       document.credentials[providerId] = credential;
       await this.writeDocument(document);
       return structuredClone(credential);
-    }, abortSignal(options));
+    }, options?.signal);
   }
 
   async delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
     validateProviderId(providerId);
     await this.withLock(async () => {
-      abortSignal(options)?.throwIfAborted();
+      options?.signal?.throwIfAborted();
       const document = await this.readDocument();
       if (!(providerId in document.credentials)) return;
       delete document.credentials[providerId];
       await this.writeDocument(document);
-    }, abortSignal(options));
+    }, options?.signal);
   }
 
   private async ensurePrivateDirectory(): Promise<void> {
